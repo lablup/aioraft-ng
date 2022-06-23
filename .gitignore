@@ -1,0 +1,13 @@
+# Visual Studio Code
+.vscode
+
+# python-virtualenv
+venv
+
+# protobuf
+*_pb2*.py
+
+# egg
+*.egg-info
+
+*.pyc
