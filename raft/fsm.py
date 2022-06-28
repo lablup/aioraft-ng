@@ -7,9 +7,9 @@ import uuid
 from datetime import datetime
 from typing import Final, Iterable, Optional
 
-from raft.interface.client import RaftClient
-from raft.interface.protocol import RaftProtocol
-from raft.interface.server import RaftServer
+from raft.client import RaftClient
+from raft.protocol import RaftProtocol
+from raft.server import RaftServer
 
 
 class RaftState(enum.Enum):

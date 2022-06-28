@@ -3,9 +3,9 @@ import asyncio
 from contextlib import suppress
 from typing import Coroutine, List
 
-from raft.interface.client import AsyncGrpcRaftClient
-from raft.interface.fsm import RaftFiniteStateMachine
-from raft.interface.server import GrpcRaftServer
+from raft.client import AsyncGrpcRaftClient
+from raft.fsm import RaftFiniteStateMachine
+from raft.server import GrpcRaftServer
 
 _cleanup_coroutines: List[Coroutine] = []
 
