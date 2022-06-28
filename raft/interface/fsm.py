@@ -5,7 +5,7 @@ import math
 import random
 import uuid
 from datetime import datetime
-from typing import Iterable, Optional
+from typing import Final, Iterable, Optional
 
 from raft.interface.client import RaftClient
 from raft.interface.protocol import RaftProtocol
@@ -33,7 +33,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         self._current_term: int = 0
         self._last_voted_term: int = 0
         self._election_timeout: float = randrangef(0.15, 0.3)
-        self._heartbeat_interval: float = 0.1
+        self._heartbeat_interval: Final[float] = 0.1
         self._peers = tuple(peers)
         self._server = server
         self._client = client
@@ -97,6 +97,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         logging.info(f'[{datetime.now().isoformat()}] [on_request_vote] term={term} cand={candidate_id[:2]} (last={self._last_voted_term})')
         current_term = self._synchronize_term(term)
         # 1. Reply false if term < currentTerm.
+        self.reset_timeout()
         if term < current_term:
             return False
         # 2. If votedFor is null or candidateId, and candidate's log is at least up-to-date as receiver's log, grant vote.
@@ -128,7 +129,7 @@ class RaftFiniteStateMachine(RaftProtocol):
             for peer in self._peers
         ])
         # TODO: Do disconnected peers should be considered?
-        if sum(results) + 1 > self.quorum:
+        if sum(results) + 1 >= self.quorum:
             self.execute_transition(RaftState.LEADER)
 
     async def _publish_heartbeat(self):
