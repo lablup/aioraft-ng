@@ -1,6 +1,7 @@
 import asyncio
 import enum
 import logging
+import math
 import random
 import uuid
 from datetime import datetime
@@ -40,8 +41,6 @@ class RaftFiniteStateMachine(RaftProtocol):
         self.execute_transition(RaftState.FOLLOWER)
         self._server.bind(self)
 
-        self._reset_election_timeout()
-
     async def main(self):
         while True:
             match self._state:
@@ -56,6 +55,7 @@ class RaftFiniteStateMachine(RaftProtocol):
                             break
                         await asyncio.sleep(self._election_timeout)
                 case RaftState.LEADER:
+                    logging.info(f'[{datetime.now().isoformat()}] LEADER: {self.id}')
                     while self._state is RaftState.LEADER:
                         await self._publish_heartbeat()
                         await asyncio.sleep(self._heartbeat_interval)
@@ -78,7 +78,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         leader_commit: int,
     ) -> bool:
         current_term = self._synchronize_term(term)
-        logging.info(f'[{datetime.now().isoformat()}] [->AppendEntries] term={term} leader={leader_id[:6]}')
+        logging.info(f'[{datetime.now().isoformat()}] [on_append_entires] term={term} leader={leader_id[:2]}')
         self.reset_timeout()
         if term >= current_term:
             self.execute_transition(RaftState.FOLLOWER)
@@ -94,7 +94,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         last_log_index: int,
         last_log_term: int,
     ) -> bool:
-        logging.info(f'[{datetime.now().isoformat()}] [->RequestVote] term={term} cand={candidate_id[:4]} (last={self._last_voted_term})')
+        logging.info(f'[{datetime.now().isoformat()}] [on_request_vote] term={term} cand={candidate_id[:2]} (last={self._last_voted_term})')
         current_term = self._synchronize_term(term)
         # 1. Reply false if term < currentTerm.
         if term < current_term:
@@ -161,5 +161,5 @@ class RaftFiniteStateMachine(RaftProtocol):
         return self._current_term
 
     @property
-    def quorum(self) -> float:
-        return (len(self._peers) + 1) / 2
+    def quorum(self) -> int:
+        return math.floor((len(self._peers) + 1) / 2) + 1
