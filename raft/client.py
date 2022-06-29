@@ -1,16 +1,13 @@
 import abc
 import asyncio
-import os
-import sys
 from contextlib import suppress
 from typing import Iterable
 from queue import Queue
 
 import grpc
 
-sys.path.append(os.path.dirname(__file__))
-import raft_pb2         # noqa: E402
-import raft_pb2_grpc    # noqa: E402
+from raft.protos import raft_pb2
+from raft.protos import raft_pb2_grpc
 
 
 class RaftClient(abc.ABC):

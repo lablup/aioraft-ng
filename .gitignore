@@ -4,9 +4,6 @@
 # python-virtualenv
 venv
 
-# protobuf
-*_pb2*.py
-
 # egg
 *.egg-info
 

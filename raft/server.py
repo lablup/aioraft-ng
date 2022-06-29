@@ -1,17 +1,13 @@
 import abc
 import asyncio
 import logging
-import os
-import sys
 from typing import Coroutine, List, Optional
 
 import grpc
 
 from raft.protocol import RaftProtocol
-
-sys.path.append(os.path.dirname(__file__))
-import raft_pb2         # noqa: E402
-import raft_pb2_grpc    # noqa: E402
+from raft.protos import raft_pb2
+from raft.protos import raft_pb2_grpc
 
 logging.basicConfig(level=logging.INFO)
 
