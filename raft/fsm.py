@@ -5,7 +5,7 @@ import math
 import random
 import uuid
 from datetime import datetime
-from typing import Final, Iterable, Optional
+from typing import Callable, Final, Iterable, Optional
 
 from raft.client import RaftClient
 from raft.protocol import RaftProtocol
@@ -28,6 +28,8 @@ class RaftFiniteStateMachine(RaftProtocol):
         peers: Optional[Iterable[str]],
         server: RaftServer,
         client: RaftClient,
+        *,
+        on_state_changed: Optional[Callable] = None,
     ):
         self._id = str(uuid.uuid4())
         self._current_term: int = 0
@@ -38,6 +40,8 @@ class RaftFiniteStateMachine(RaftProtocol):
         self._server = server
         self._client = client
         self._leader_id: Optional[str] = None
+
+        self._on_state_changed: Optional[Callable] = on_state_changed
 
         self.execute_transition(RaftState.FOLLOWER)
         self._server.bind(self)
@@ -66,6 +70,7 @@ class RaftFiniteStateMachine(RaftProtocol):
 
     def execute_transition(self, next_state: RaftState):
         self._state = next_state
+        getattr(self._on_state_changed, '__call__', lambda: None)()
 
     """
     External Transitions
