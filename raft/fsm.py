@@ -41,7 +41,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         self._client = client
         self._leader_id: Optional[str] = None
 
-        self._on_state_changed: Optional[Callable] = on_state_changed
+        self._on_state_changed: Optional[Callable[[RaftState], None]] = on_state_changed
 
         self.execute_transition(RaftState.FOLLOWER)
         self._server.bind(self)
@@ -70,7 +70,7 @@ class RaftFiniteStateMachine(RaftProtocol):
 
     def execute_transition(self, next_state: RaftState):
         self._state = next_state
-        getattr(self._on_state_changed, '__call__', lambda: None)()
+        getattr(self._on_state_changed, '__call__', lambda: None)(next_state)
 
     """
     External Transitions
