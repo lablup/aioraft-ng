@@ -37,6 +37,7 @@ class RaftFiniteStateMachine(RaftProtocol):
         self._peers = tuple(peers)
         self._server = server
         self._client = client
+        self._leader_id: Optional[str] = None
 
         self.execute_transition(RaftState.FOLLOWER)
         self._server.bind(self)
@@ -49,6 +50,7 @@ class RaftFiniteStateMachine(RaftProtocol):
                     await self._wait_for_election_timeout()
                     self.execute_transition(RaftState.CANDIDATE)
                 case RaftState.CANDIDATE:
+                    self._leader_id = None
                     while self._state is RaftState.CANDIDATE:
                         await self._request_vote()
                         if self._state is RaftState.LEADER:
@@ -56,6 +58,7 @@ class RaftFiniteStateMachine(RaftProtocol):
                         await asyncio.sleep(self._election_timeout)
                 case RaftState.LEADER:
                     logging.info(f'[{datetime.now().isoformat()}] LEADER: {self.id}')
+                    self._leader_id = self.id
                     while self._state is RaftState.LEADER:
                         await self._publish_heartbeat()
                         await asyncio.sleep(self._heartbeat_interval)
@@ -78,7 +81,8 @@ class RaftFiniteStateMachine(RaftProtocol):
         leader_commit: int,
     ) -> bool:
         current_term = self._synchronize_term(term)
-        logging.info(f'[{datetime.now().isoformat()}] [on_append_entires] term={term} leader={leader_id[:2]}')
+        self._leader_id = leader_id
+        logging.info(f'[{datetime.now().isoformat()}] [on_append_entries] term={term} leader={leader_id[:2]}')
         self.reset_timeout()
         if term >= current_term:
             self.execute_transition(RaftState.FOLLOWER)
@@ -156,6 +160,10 @@ class RaftFiniteStateMachine(RaftProtocol):
     @property
     def id(self) -> str:
         return self._id
+
+    @property
+    def is_leader(self) -> bool:
+        return self._leader_id == self._id
 
     @property
     def current_term(self) -> int:
