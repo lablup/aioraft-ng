@@ -26,7 +26,7 @@ setup(
     version=VERSION,
     long_description=long_description,
     author="rapsealk",
-    package_dir={"": "raft"},
+    package_dir={"raft": "raft"},
     packages=find_packages("raft"),
     python_requires=">=3.10",
     install_requires=install_requires,
