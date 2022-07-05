@@ -36,9 +36,6 @@ class RaftClient(abc.ABC):
 
 
 class AsyncGrpcRaftClient:
-    def __init__(self):
-        self._vote_queue = Queue()
-
     async def request_append_entries(
         self,
         *,
@@ -75,10 +72,10 @@ class AsyncGrpcRaftClient:
         last_log_term: int,
         timeout: float = 5.0,
     ) -> bool:
-        self._vote_granted = None
+        queue = Queue()
         timeout_task = asyncio.create_task(asyncio.sleep(timeout))
         done, pending = await asyncio.wait({
-            asyncio.create_task(self._request_vote(address, term, candidate_id, last_log_index, last_log_term)),
+            asyncio.create_task(self._request_vote(address, term, candidate_id, last_log_index, last_log_term, queue=queue)),
             timeout_task,
         }, return_when=asyncio.FIRST_COMPLETED)
         for task in pending:
@@ -86,9 +83,18 @@ class AsyncGrpcRaftClient:
                 task.cancel()
         if timeout_task in done:
             return False
-        return self._vote_queue.get()
+        return queue.get()
 
-    async def _request_vote(self, address: str, term: int, candidate_id: str, last_log_index: int, last_log_term: int):
+    async def _request_vote(
+        self,
+        address: str,
+        term: int,
+        candidate_id: str,
+        last_log_index: int,
+        last_log_term: int,
+        *,
+        queue: Queue,
+    ):
         async with grpc.aio.insecure_channel(address) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             request = raft_pb2.RequestVoteRequest(
@@ -97,6 +103,6 @@ class AsyncGrpcRaftClient:
             )
             try:
                 response = await stub.RequestVote(request)
-                self._vote_queue.put(response.vote_granted)
+                queue.put(response.vote_granted)
             except grpc.aio.AioRpcError:
-                self._vote_queue.put(False)
+                queue.put(False)
