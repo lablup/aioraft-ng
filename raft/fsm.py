@@ -70,7 +70,7 @@ class RaftFiniteStateMachine(RaftProtocol):
 
     def execute_transition(self, next_state: RaftState):
         self._state = next_state
-        getattr(self._on_state_changed, '__call__', lambda: None)(next_state)
+        getattr(self._on_state_changed, '__call__', lambda _: None)(next_state)
 
     """
     External Transitions
