@@ -1,6 +1,14 @@
+import enum
 from typing import Type, TypeVar
 
-PeerId = str
+RaftId = str
+
+
+class RaftState(enum.Enum):
+    FOLLOWER = 0
+    CANDIDATE = 1
+    LEADER = 2
+
 
 T_aobj = TypeVar("T_aobj", bound="aobject")
 
