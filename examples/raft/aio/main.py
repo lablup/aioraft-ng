@@ -15,7 +15,7 @@ _cleanup_coroutines: List[Coroutine] = []
 
 
 def load_config():
-    path = Path(__file__).parent / "config.toml"
+    path = Path(__file__).parent.parent / "config.toml"
     return tomli.loads(path.read_text())
 
 
