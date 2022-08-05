@@ -109,9 +109,9 @@ class Raft(AbstractRaftProtocol):
             each entry contains command for state machine, and term when entry was received by leader
             (first index is 1)
         """
-        self.__current_term: Final[AtomicInteger] = AtomicInteger(0)
+        self.__current_term: AtomicInteger = AtomicInteger(0)
         self.__voted_for: Optional[RaftId] = None
-        self.__log = []
+        self.__log: Iterable[raft_pb2.Log] = []
 
     def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
