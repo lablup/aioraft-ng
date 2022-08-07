@@ -31,7 +31,8 @@ def main():
 
     config = load_config()
     configuration = tuple(
-        server for server in config["raft"]["configuration"]
+        server
+        for server in config["raft"]["configuration"]
         if not server.endswith(str(args.port))
     )
 
@@ -40,7 +41,11 @@ def main():
     raft = Raft(public_id, server=server, client=client, configuration=configuration)
 
     threads = [
-        Thread(target=server.run, kwargs={"host": "0.0.0.0", "port": args.port}, daemon=True),
+        Thread(
+            target=server.run,
+            kwargs={"host": "0.0.0.0", "port": args.port},
+            daemon=True,
+        ),
         Thread(target=raft.main, daemon=True),
     ]
     for thread in threads:

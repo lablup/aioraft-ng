@@ -15,7 +15,12 @@ async def test_raft_aio_leader_election():
     configurations = [f"127.0.0.1:{port}" for port in ports]
     servers = [GrpcRaftServer() for _ in range(n)]
     raft_nodes = [
-        await Raft.new(f"raft.aio-{i}", server, GrpcRaftClient(), filter(lambda x: x != addr, configurations))
+        await Raft.new(
+            f"raft.aio-{i}",
+            server,
+            GrpcRaftClient(),
+            filter(lambda x: x != addr, configurations),
+        )
         for i, (server, addr) in enumerate(zip(servers, configurations))
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))

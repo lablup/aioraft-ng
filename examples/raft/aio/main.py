@@ -32,18 +32,25 @@ async def _main():
 
     config = load_config()
     configuration = tuple(
-        server for server in config["raft"]["configuration"]
+        server
+        for server in config["raft"]["configuration"]
         if not server.endswith(str(args.port))
     )
 
     server = GrpcRaftServer()
     client = GrpcRaftClient()
-    raft = await Raft.new(public_id, server=server, client=client, configuration=configuration)
+    raft = await Raft.new(
+        public_id, server=server, client=client, configuration=configuration
+    )
 
     done, pending = await asyncio.wait(
         {
             asyncio.create_task(
-                server.run(host="0.0.0.0", port=args.port, cleanup_coroutines=_cleanup_coroutines),
+                server.run(
+                    host="0.0.0.0",
+                    port=args.port,
+                    cleanup_coroutines=_cleanup_coroutines,
+                ),
             ),
             asyncio.create_task(raft.main()),
         },

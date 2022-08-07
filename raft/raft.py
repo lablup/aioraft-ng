@@ -178,7 +178,9 @@ class Raft(AbstractRaftProtocol):
             for server in self.__configuration
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
-            terms, grants = zip(*pool.map(lambda k: self.__client.request_vote(**k), kwargs))
+            terms, grants = zip(
+                *pool.map(lambda k: self.__client.request_vote(**k), kwargs)
+            )
 
         for term in terms:
             if term > current_term:
@@ -204,7 +206,9 @@ class Raft(AbstractRaftProtocol):
             for server in self.__configuration
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
-            terms, successes = zip(*pool.map(lambda k: self.__client.append_entries(**k), kwargs))
+            terms, successes = zip(
+                *pool.map(lambda k: self.__client.append_entries(**k), kwargs)
+            )
 
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
