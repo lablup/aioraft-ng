@@ -28,7 +28,7 @@ async def test_raft_aio_leader_election():
                 for server, port in zip(servers, ports)
             ],
             *raft_tasks,
-            asyncio.create_task(asyncio.sleep(1.0)),
+            asyncio.create_task(asyncio.sleep(3.0)),
         },
         return_when=asyncio.FIRST_COMPLETED,
     )

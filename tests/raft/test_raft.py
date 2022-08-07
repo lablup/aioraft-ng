@@ -27,5 +27,5 @@ def test_raft_leader_election():
     for server_thread, raft_thread in zip(server_threads, raft_threads):
         server_thread.start()
         raft_thread.start()
-    time.sleep(1.0)
+    time.sleep(3.0)
     assert any(map(lambda r: r.has_leadership(), raft_nodes))
