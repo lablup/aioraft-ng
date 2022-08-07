@@ -27,14 +27,14 @@ async def test_raft_aio_leader_election():
 
     raft_tasks = [asyncio.create_task(raft.main()) for raft in raft_nodes]
     done, pending = await asyncio.wait(
-        {
+        [
             *[
                 asyncio.create_task(server.run(host="0.0.0.0", port=port))
                 for server, port in zip(servers, ports)
             ],
             *raft_tasks,
             asyncio.create_task(asyncio.sleep(3.0)),
-        },
+        ],
         return_when=asyncio.FIRST_COMPLETED,
     )
     assert any(map(lambda r: r.has_leadership(), raft_nodes))
