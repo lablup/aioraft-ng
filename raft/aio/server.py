@@ -1,11 +1,9 @@
 import abc
-import os
-from concurrent import futures
-from typing import Optional
+from typing import Coroutine, List, Optional
 
 import grpc
 
-from raft.protocol import AbstractRaftProtocol
+from raft.aio.protocol import AbstractRaftProtocol
 from raft.protos import raft_pb2, raft_pb2_grpc
 
 
@@ -27,8 +25,13 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
     def bind(self, protocol: AbstractRaftProtocol):
         self.__protocol = protocol
 
-    def run(self, host: str = "[::]", port: int = 50051):
-        server = grpc.server(futures.ThreadPoolExecutor(max_workers=os.cpu_count()))
+    async def run(
+        self,
+        host: str = "[::]",
+        port: int = 50051,
+        cleanup_coroutines: Optional[List[Coroutine]] = None,
+    ):
+        server = grpc.aio.server()
         raft_pb2_grpc.add_RaftServiceServicer_to_server(self, server)
 
         if credentials := self.__credentials:
@@ -36,21 +39,27 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         else:
             server.add_insecure_port(f"{host}:{port}")
 
-        server.start()
-        server.wait_for_termination()
+        async def server_graceful_shutdown():
+            await server.stop(5)
+
+        if cleanup_coroutines is not None:
+            cleanup_coroutines.append(server_graceful_shutdown())
+
+        await server.start()
+        await server.wait_for_termination()
 
     """
     raft_pb2_grpc.RaftServiceServicer
     """
 
-    def AppendEntries(
+    async def AppendEntries(
         self,
         request: raft_pb2.AppendEntriesRequest,
-        context: grpc.ServicerContext,
+        context: grpc.aio.ServicerContext,
     ) -> raft_pb2.AppendEntriesResponse:
         if (protocol := self.__protocol) is None:
             return raft_pb2.AppendEntriesResponse(term=request.term, success=False)
-        term, success = protocol.on_append_entries(
+        term, success = await protocol.on_append_entries(
             term=request.term,
             leader_id=request.leader_id,
             prev_log_index=request.prev_log_index,
@@ -60,14 +69,14 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         )
         return raft_pb2.AppendEntriesResponse(term=term, success=success)
 
-    def RequestVote(
+    async def RequestVote(
         self,
         request: raft_pb2.RequestVoteRequest,
-        context: grpc.ServicerContext,
+        context: grpc.aio.ServicerContext,
     ) -> raft_pb2.RequestVoteResponse:
         if (protocol := self.__protocol) is None:
             return raft_pb2.RequestVoteResponse(term=request.term, vote_granted=False)
-        term, vote_granted = protocol.on_request_vote(
+        term, vote_granted = await protocol.on_request_vote(
             term=request.term,
             candidate_id=request.candidate_id,
             last_log_index=request.last_log_index,

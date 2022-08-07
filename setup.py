@@ -1,6 +1,6 @@
 import os
 
-from setuptools import find_packages, setup
+from setuptools import setup
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
 VERSION = "0.1.0"
@@ -27,10 +27,9 @@ setup(
     long_description=long_description,
     author="rapsealk",
     package_dir={"raft": "raft"},
-    packages=find_packages("raft"),
     python_requires=">=3.10",
     install_requires=install_requires,
     extras_require={"dev": dev_requires},
     zip_safe=False,
-    include_package_data=True
+    include_package_data=True,
 )

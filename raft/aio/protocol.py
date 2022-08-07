@@ -7,7 +7,7 @@ from raft.types import RaftId
 
 class AbstractRaftProtocol(abc.ABC):
     @abc.abstractmethod
-    def on_append_entries(
+    async def on_append_entries(
         self,
         *,
         term: int,
@@ -45,7 +45,7 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def on_request_vote(
+    async def on_request_vote(
         self,
         *,
         term: int,
