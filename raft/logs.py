@@ -63,9 +63,7 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
         )
         with sqlite3.connect(self._database) as conn:
             cursor = conn.cursor()
-            cursor.executemany(
-                f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows
-            )
+            cursor.executemany(f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows)
             conn.commit()
 
     def get(self, index: int) -> Optional[raft_pb2.Log]:
