@@ -26,7 +26,7 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def splice(self, start: int, count: Optional[int] = None) -> None:
+    def splice(self, start: int) -> None:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -58,13 +58,13 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
             self._database.unlink(missing_ok=True)
 
     def append(self, entries: Iterable[raft_pb2.Log]) -> None:
-        entries = tuple(
+        rows = tuple(
             (entry.index, entry.term, entry.command, False) for entry in entries
         )
         with sqlite3.connect(self._database) as conn:
             cursor = conn.cursor()
             cursor.executemany(
-                f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", entries
+                f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows
             )
             conn.commit()
 
@@ -87,7 +87,7 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
                 row = raft_pb2.Log(index=row[0], term=row[1], command=row[2])
             return row
 
-    def slice(self, start: int, stop: Optional[int] = None) -> Tuple[raft_pb2.Log]:
+    def slice(self, start: int, stop: Optional[int] = None) -> Tuple[raft_pb2.Log, ...]:
         with sqlite3.connect(self._database) as conn:
             cursor = conn.cursor()
             query = f"SELECT * FROM {self._table} WHERE idx >= :start"

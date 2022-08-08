@@ -29,7 +29,7 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def splice(self, start: int, count: Optional[int] = None) -> None:
+    async def splice(self, start: int) -> None:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -62,13 +62,13 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
             self._database.unlink(missing_ok=True)
 
     async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
-        entries = tuple(
+        rows = tuple(
             (entry.index, entry.term, entry.command, False) for entry in entries
         )
         async with aiosqlite.connect(self._database) as conn:
             cursor = await conn.cursor()
             await cursor.executemany(
-                f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", entries
+                f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows
             )
             await conn.commit()
 
@@ -79,8 +79,8 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
                 f"SELECT * FROM {self._table} WHERE idx = :index", {"index": index}
             )
             if row := await cursor.fetchone():
-                row = raft_pb2.Log(index=row[0], term=row[1], command=row[2])
-            return row
+                return raft_pb2.Log(index=row[0], term=row[1], command=row[2])
+            return None
 
     async def last(self) -> Optional[raft_pb2.Log]:
         async with aiosqlite.connect(self._database) as conn:
@@ -89,12 +89,12 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
                 f"SELECT * FROM {self._table} ORDER BY idx DESC LIMIT 1"
             )
             if row := await cursor.fetchone():
-                row = raft_pb2.Log(index=row[0], term=row[1], command=row[2])
-            return row
+                return raft_pb2.Log(index=row[0], term=row[1], command=row[2])
+            return None
 
     async def slice(
         self, start: int, stop: Optional[int] = None
-    ) -> Tuple[raft_pb2.Log]:
+    ) -> Tuple[raft_pb2.Log, ...]:
         async with aiosqlite.connect(self._database) as conn:
             cursor = await conn.cursor()
             query = f"SELECT * FROM {self._table} WHERE idx >= :start"
@@ -120,5 +120,6 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
         async with aiosqlite.connect(self._database) as conn:
             cursor = await conn.cursor()
             cursor = await cursor.execute(f"SELECT COUNT(*) FROM {self._table}")
-            count, *_ = await cursor.fetchone()
-            return count
+            if result := await cursor.fetchone():
+                return result[0]
+            return 0
