@@ -82,8 +82,7 @@ class Raft(AbstractRaftProtocol):
                     self._wait_for_election_timeout()
                 case RaftState.CANDIDATE:
                     while self.__state is RaftState.CANDIDATE:
-                        self._start_election()
-                        self._reset_election_timeout()
+                        self.start_election()
                         self._initialize_volatile_state()
                         if self.has_leadership():
                             self._initialize_leader_volatile_state()
@@ -160,9 +159,10 @@ class Raft(AbstractRaftProtocol):
     def __change_state(self, next_state: RaftState) -> None:
         self.__state: RaftState = next_state
 
-    def _start_election(self) -> None:
+    def start_election(self) -> bool:
         self.__current_term.increase()
         self.__voted_for = self.id
+        self._reset_election_timeout()
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
@@ -189,6 +189,9 @@ class Raft(AbstractRaftProtocol):
         else:
             if sum(grants) + 1 >= self.quorum:
                 self.__change_state(RaftState.LEADER)
+                return True
+
+        return False
 
     def _publish_heartbeat(self) -> None:
         if not self.has_leadership():

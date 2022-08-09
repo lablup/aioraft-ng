@@ -1,4 +1,4 @@
-import time
+import random
 from threading import Thread
 
 from raft import Raft
@@ -22,21 +22,19 @@ def test_raft_leader_election():
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 
-    server_threads, raft_threads = zip(
-        *[
-            (
-                Thread(
-                    target=server.run,
-                    kwargs={"host": "0.0.0.0", "port": port},
-                    daemon=True,
-                ),
-                Thread(target=raft.main, daemon=True),
-            )
-            for raft, server, port in zip(raft_nodes, servers, ports)
-        ]
-    )
-    for server_thread, raft_thread in zip(server_threads, raft_threads):
-        server_thread.start()
-        raft_thread.start()
-    time.sleep(3.0)
-    assert any(map(lambda r: r.has_leadership(), raft_nodes))
+    raft_server_threads = [
+        Thread(
+            target=server.run,
+            kwargs={"host": "0.0.0.0", "port": port},
+            daemon=True,
+        )
+        for raft, server, port in zip(raft_nodes, servers, ports)
+    ]
+    for raft_server_thread in raft_server_threads:
+        raft_server_thread.start()
+
+    random_node = random.choice(raft_nodes)
+    raft_election_thread = Thread(target=random_node.start_election, daemon=True)
+    raft_election_thread.start()
+    raft_election_thread.join()
+    assert random_node.has_leadership() is True
