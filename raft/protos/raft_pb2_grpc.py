@@ -122,3 +122,173 @@ class RaftService(object):
             timeout,
             metadata,
         )
+
+
+class ClientInteractionServiceStub(object):
+    """*
+    Client Interaction
+    """
+
+    def __init__(self, channel):
+        """Constructor.
+
+        Args:
+            channel: A grpc.Channel.
+        """
+        self.ClientRequest = channel.unary_unary(
+            "/ClientInteractionService/ClientRequest",
+            request_serializer=raft__pb2.ClientRequestRequest.SerializeToString,
+            response_deserializer=raft__pb2.ClientRequestResponse.FromString,
+        )
+        self.RegisterClient = channel.unary_unary(
+            "/ClientInteractionService/RegisterClient",
+            request_serializer=raft__pb2.RegisterClientRequest.SerializeToString,
+            response_deserializer=raft__pb2.RegisterClientResponse.FromString,
+        )
+        self.ClientQuery = channel.unary_unary(
+            "/ClientInteractionService/ClientQuery",
+            request_serializer=raft__pb2.ClientQueryRequest.SerializeToString,
+            response_deserializer=raft__pb2.ClientQueryResponse.FromString,
+        )
+
+
+class ClientInteractionServiceServicer(object):
+    """*
+    Client Interaction
+    """
+
+    def ClientRequest(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def RegisterClient(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def ClientQuery(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+
+def add_ClientInteractionServiceServicer_to_server(servicer, server):
+    rpc_method_handlers = {
+        "ClientRequest": grpc.unary_unary_rpc_method_handler(
+            servicer.ClientRequest,
+            request_deserializer=raft__pb2.ClientRequestRequest.FromString,
+            response_serializer=raft__pb2.ClientRequestResponse.SerializeToString,
+        ),
+        "RegisterClient": grpc.unary_unary_rpc_method_handler(
+            servicer.RegisterClient,
+            request_deserializer=raft__pb2.RegisterClientRequest.FromString,
+            response_serializer=raft__pb2.RegisterClientResponse.SerializeToString,
+        ),
+        "ClientQuery": grpc.unary_unary_rpc_method_handler(
+            servicer.ClientQuery,
+            request_deserializer=raft__pb2.ClientQueryRequest.FromString,
+            response_serializer=raft__pb2.ClientQueryResponse.SerializeToString,
+        ),
+    }
+    generic_handler = grpc.method_handlers_generic_handler(
+        "ClientInteractionService", rpc_method_handlers
+    )
+    server.add_generic_rpc_handlers((generic_handler,))
+
+
+# This class is part of an EXPERIMENTAL API.
+class ClientInteractionService(object):
+    """*
+    Client Interaction
+    """
+
+    @staticmethod
+    def ClientRequest(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ClientInteractionService/ClientRequest",
+            raft__pb2.ClientRequestRequest.SerializeToString,
+            raft__pb2.ClientRequestResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+        )
+
+    @staticmethod
+    def RegisterClient(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ClientInteractionService/RegisterClient",
+            raft__pb2.RegisterClientRequest.SerializeToString,
+            raft__pb2.RegisterClientResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+        )
+
+    @staticmethod
+    def ClientQuery(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/ClientInteractionService/ClientQuery",
+            raft__pb2.ClientQueryRequest.SerializeToString,
+            raft__pb2.ClientQueryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+        )

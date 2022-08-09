@@ -36,3 +36,48 @@ message Log {
     uint64 term = 2;
     string command = 3;
 }
+
+/**
+ * Client Interaction
+ */
+service ClientInteractionService {
+    rpc ClientRequest(ClientRequestRequest) returns (ClientRequestResponse);
+    rpc RegisterClient(RegisterClientRequest) returns (RegisterClientResponse);
+    rpc ClientQuery(ClientQueryRequest) returns (ClientQueryResponse);
+}
+
+enum ClientInteractionStatus {
+    OK = 0;
+    NOT_LEADER = 1;
+    SESSION_EXPIRED = 2;
+}
+
+message ClientRequestRequest {
+    string client_id = 1;                   // client invoking request
+    uint64 sequence_num = 2;                // to eliminate duplicates
+    string command = 3;                     // request for state machine, may affect state
+}
+
+message ClientRequestResponse {
+    ClientInteractionStatus status = 1;     // OK if state machine applied command
+    optional string response = 2;           // state machine output, if successful
+    optional string leader_hint = 3;        // address of recent leader, if known
+}
+
+message RegisterClientRequest { /* No arguments */ }
+
+message RegisterClientResponse {
+    ClientInteractionStatus status = 1;     // OK if state machine registered client
+    string client_id = 2;                   // unique identifier for client session
+    optional string leader_hint = 3;        // address of recent leader, if known
+}
+
+message ClientQueryRequest {
+    string query = 1;                       // request for state machine, read-only
+}
+
+message ClientQueryResponse {
+    ClientInteractionStatus status = 1;     // OK if state machine processed query
+    optional string response = 2;           // state machine output, if successful
+    optional string leader_hint = 3;        // address of recent leader, if known
+}
