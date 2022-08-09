@@ -25,7 +25,10 @@ async def test_raft_aio_leader_election():
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 
-    raft_server_tasks = [asyncio.create_task(server.run(host="0.0.0.0", port=port)) for server, port in zip(servers, ports)]
+    raft_server_tasks = [
+        asyncio.create_task(server.run(host="0.0.0.0", port=port))
+        for server, port in zip(servers, ports)
+    ]
     random_node = random.choice(raft_nodes)
     raft_election_task = asyncio.create_task(random_node.start_election())
     done, pending = await asyncio.wait(
