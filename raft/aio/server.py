@@ -3,7 +3,7 @@ from typing import Coroutine, List, Optional
 
 import grpc
 
-from raft.aio.protocol import AbstractRaftProtocol
+from raft.aio.protocols import AbstractRaftProtocol
 from raft.protos import raft_pb2, raft_pb2_grpc
 
 
