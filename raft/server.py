@@ -5,7 +5,7 @@ from typing import Optional
 
 import grpc
 
-from raft.protocol import AbstractRaftProtocol
+from raft.protocols import AbstractRaftProtocol
 from raft.protos import raft_pb2, raft_pb2_grpc
 
 

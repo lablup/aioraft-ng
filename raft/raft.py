@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Final, Iterable, Optional, Set, Tuple
 
 from raft.client import AbstractRaftClient
-from raft.protocol import AbstractRaftProtocol
+from raft.protocols import AbstractRaftProtocol
 from raft.protos import raft_pb2
 from raft.server import AbstractRaftServer
 from raft.types import RaftId, RaftState
