@@ -167,5 +167,5 @@ class RequestVoteResponse(_message.Message):
         self, term: _Optional[int] = ..., vote_granted: bool = ...
     ) -> None: ...
 
-class RaftClusterStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+class RaftClusterStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):  # type: ignore
     __slots__: _List[str] = []

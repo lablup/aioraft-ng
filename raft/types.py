@@ -1,8 +1,6 @@
 import enum
 from typing import Type, TypeVar
 
-from raft.protos import raft_pb2
-
 RaftId = str
 
 
@@ -13,9 +11,9 @@ class RaftState(enum.Enum):
 
 
 class RaftClusterStatus(enum.Enum):
-    OK = raft_pb2.RaftClusterStatus.Value("OK")
-    NOT_LEADER = raft_pb2.RaftClusterStatus.Value("NOT_LEADER")
-    SESSION_EXPIRED = raft_pb2.RaftClusterStatus.Value("SESSION_EXPIRED")
+    OK = 0
+    NOT_LEADER = 1
+    SESSION_EXPIRED = 2
 
 
 T_aobj = TypeVar("T_aobj", bound="aobject")
