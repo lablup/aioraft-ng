@@ -46,7 +46,10 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
         self._logs.sort(key=lambda l: l.index)
 
     async def get(self, index: int) -> Optional[raft_pb2.Log]:
-        return next(filter(lambda log: log.index == index, self._logs), None)
+        for log in self._logs:
+            if log.index == index:
+                return log
+        return None
 
     async def last(self) -> Optional[raft_pb2.Log]:
         return self._logs[-1] if self._logs else None

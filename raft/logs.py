@@ -43,14 +43,15 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
         self._logs.sort(key=lambda l: l.index)
 
     def get(self, index: int) -> Optional[raft_pb2.Log]:
-        return next(filter(lambda log: log.index == index, self._logs), None)
+        for log in self._logs:
+            if log.index == index:
+                return log
+        return None
 
     def last(self) -> Optional[raft_pb2.Log]:
         return self._logs[-1] if self._logs else None
 
-    def slice(
-        self, start: int, stop: Optional[int] = None
-    ) -> Tuple[raft_pb2.Log, ...]:
+    def slice(self, start: int, stop: Optional[int] = None) -> Tuple[raft_pb2.Log, ...]:
         start_idx, stop_idx = 0, None
         for idx, log in enumerate(self._logs):
             if log.index == start:

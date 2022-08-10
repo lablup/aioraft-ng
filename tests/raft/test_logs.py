@@ -25,7 +25,9 @@ def test_memory_replicated_log(memory_replicated_log: MemoryReplicatedLog) -> No
     assert row.index == n
 
 
-def test_memory_replicated_log__slice(memory_replicated_log: MemoryReplicatedLog) -> None:
+def test_memory_replicated_log__slice(
+    memory_replicated_log: MemoryReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -41,7 +43,9 @@ def test_memory_replicated_log__slice(memory_replicated_log: MemoryReplicatedLog
     assert rows[-1].index == (random_stop - 1)
 
 
-def test_memory_replicated_log__splice(memory_replicated_log: MemoryReplicatedLog) -> None:
+def test_memory_replicated_log__splice(
+    memory_replicated_log: MemoryReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -77,7 +81,9 @@ def test_sqlite_replicated_log(sqlite_replicated_log: SqliteReplicatedLog) -> No
     assert row.index == n
 
 
-def test_sqlite_replicated_log__slice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+def test_sqlite_replicated_log__slice(
+    sqlite_replicated_log: SqliteReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -93,7 +99,9 @@ def test_sqlite_replicated_log__slice(sqlite_replicated_log: SqliteReplicatedLog
     assert rows[-1].index == (random_stop - 1)
 
 
-def test_sqlite_replicated_log__splice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+def test_sqlite_replicated_log__splice(
+    sqlite_replicated_log: SqliteReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")

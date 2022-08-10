@@ -7,7 +7,9 @@ from raft.protos import raft_pb2
 
 
 @pytest.mark.asyncio
-async def test_memory_replicated_log(memory_replicated_log: MemoryReplicatedLog) -> None:
+async def test_memory_replicated_log(
+    memory_replicated_log: MemoryReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -29,7 +31,9 @@ async def test_memory_replicated_log(memory_replicated_log: MemoryReplicatedLog)
 
 
 @pytest.mark.asyncio
-async def test_memory_replicated_log__slice(memory_replicated_log: MemoryReplicatedLog) -> None:
+async def test_memory_replicated_log__slice(
+    memory_replicated_log: MemoryReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -46,7 +50,9 @@ async def test_memory_replicated_log__slice(memory_replicated_log: MemoryReplica
 
 
 @pytest.mark.asyncio
-async def test_memory_replicated_log__splice(memory_replicated_log: MemoryReplicatedLog) -> None:
+async def test_memory_replicated_log__splice(
+    memory_replicated_log: MemoryReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -62,7 +68,9 @@ async def test_memory_replicated_log__splice(memory_replicated_log: MemoryReplic
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+async def test_sqlite_replicated_log_aio(
+    sqlite_replicated_log: SqliteReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -84,7 +92,9 @@ async def test_sqlite_replicated_log_aio(sqlite_replicated_log: SqliteReplicated
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio__slice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+async def test_sqlite_replicated_log_aio__slice(
+    sqlite_replicated_log: SqliteReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
@@ -101,7 +111,9 @@ async def test_sqlite_replicated_log_aio__slice(sqlite_replicated_log: SqliteRep
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio__splice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+async def test_sqlite_replicated_log_aio__splice(
+    sqlite_replicated_log: SqliteReplicatedLog,
+) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
