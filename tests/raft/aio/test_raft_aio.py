@@ -1,5 +1,5 @@
 import asyncio
-import random
+from contextlib import suppress
 
 import pytest
 
@@ -25,19 +25,35 @@ async def test_raft_aio_leader_election():
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 
+    leadership_timeout = 0.0
+    LEADERSHIP_CHECK_INTERVAL = 0.1
+    LEADERSHIP_CHECK_MAX_TRIAL = 100
+
+    async def _wait_for_new_leadership():
+        nonlocal leadership_timeout
+        for _ in range(LEADERSHIP_CHECK_MAX_TRIAL):
+            await asyncio.sleep(LEADERSHIP_CHECK_INTERVAL)
+            leadership_timeout += LEADERSHIP_CHECK_INTERVAL
+            if any(map(lambda r: r.has_leadership(), raft_nodes)):
+                break
+
     raft_server_tasks = [
         asyncio.create_task(server.run(host="0.0.0.0", port=port))
         for server, port in zip(servers, ports)
     ]
-    random_node = random.choice(raft_nodes)
-    raft_election_task = asyncio.create_task(random_node.start_election())
+    raft_main_tasks = [asyncio.create_task(raft.main()) for raft in raft_nodes]
     done, pending = await asyncio.wait(
         {
             *raft_server_tasks,
-            raft_election_task,
+            *raft_main_tasks,
+            asyncio.create_task(_wait_for_new_leadership()),
         },
         return_when=asyncio.FIRST_COMPLETED,
     )
-    assert raft_election_task in done
-    assert raft_election_task.result() is True
-    assert random_node.has_leadership() is True
+    assert any(map(lambda r: r.has_leadership(), raft_nodes))
+    assert leadership_timeout <= LEADERSHIP_CHECK_INTERVAL * LEADERSHIP_CHECK_MAX_TRIAL
+
+    for task in pending:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task

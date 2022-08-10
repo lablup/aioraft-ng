@@ -1,4 +1,4 @@
-import random
+import time
 from threading import Thread
 
 from raft import Raft
@@ -22,19 +22,36 @@ def test_raft_leader_election():
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 
+    leadership_timeout = 0.0
+    LEADERSHIP_CHECK_INTERVAL = 0.1
+    LEADERSHIP_CHECK_MAX_TRIAL = 100
+
+    def _wait_for_new_leadership():
+        nonlocal leadership_timeout
+        for _ in range(LEADERSHIP_CHECK_MAX_TRIAL):
+            time.sleep(LEADERSHIP_CHECK_INTERVAL)
+            leadership_timeout += LEADERSHIP_CHECK_INTERVAL
+            if any(map(lambda r: r.has_leadership(), raft_nodes)):
+                break
+
     raft_server_threads = [
         Thread(
             target=server.run,
             kwargs={"host": "0.0.0.0", "port": port},
             daemon=True,
         )
-        for raft, server, port in zip(raft_nodes, servers, ports)
+        for server, port in zip(servers, ports)
     ]
     for raft_server_thread in raft_server_threads:
         raft_server_thread.start()
 
-    random_node = random.choice(raft_nodes)
-    raft_election_thread = Thread(target=random_node.start_election, daemon=True)
-    raft_election_thread.start()
-    raft_election_thread.join()
-    assert random_node.has_leadership() is True
+    raft_main_threads = [Thread(target=raft.main, daemon=True) for raft in raft_nodes]
+    for raft_main_thread in raft_main_threads:
+        raft_main_thread.start()
+
+    leadership_timeout_thread = Thread(target=_wait_for_new_leadership, daemon=True)
+    leadership_timeout_thread.start()
+    leadership_timeout_thread.join()
+
+    assert any(map(lambda r: r.has_leadership(), raft_nodes))
+    assert leadership_timeout <= LEADERSHIP_CHECK_INTERVAL * LEADERSHIP_CHECK_MAX_TRIAL

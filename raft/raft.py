@@ -63,14 +63,14 @@ class Raft(AbstractRaftProtocol):
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
 
+        self.__election_timeout: Final[float] = randrangef(0.15, 0.3)
         self.__heartbeat_timeout: Final[float] = 0.1
 
         self._initialize_persistent_state()
         self._initialize_volatile_state()
 
         self.__change_state(RaftState.FOLLOWER)
-        self.__reset_timeout()
-        self._reset_election_timeout()
+        self.__restart_timeout()
 
         server.bind(self)
 
@@ -78,11 +78,11 @@ class Raft(AbstractRaftProtocol):
         while True:
             match self.__state:
                 case RaftState.FOLLOWER:
-                    self.__reset_timeout()
+                    self.__restart_timeout()
                     self._wait_for_election_timeout()
                 case RaftState.CANDIDATE:
                     while self.__state is RaftState.CANDIDATE:
-                        self.start_election()
+                        self._start_election()
                         self._initialize_volatile_state()
                         if self.has_leadership():
                             self._initialize_leader_volatile_state()
@@ -138,10 +138,7 @@ class Raft(AbstractRaftProtocol):
         self.__next_index: Dict[RaftId, int] = {}
         self.__match_index: Dict[RaftId, int] = {}
 
-    def _reset_election_timeout(self) -> None:
-        self.__election_timeout: float = randrangef(0.15, 0.3)
-
-    def __reset_timeout(self) -> None:
+    def __restart_timeout(self) -> None:
         self.__elapsed_time: float = 0.0
 
     def _wait_for_election_timeout(self, interval: float = 1.0 / 30) -> None:
@@ -159,11 +156,10 @@ class Raft(AbstractRaftProtocol):
     def __change_state(self, next_state: RaftState) -> None:
         self.__state: RaftState = next_state
 
-    def start_election(self) -> bool:
+    def _start_election(self) -> bool:
         self.__current_term.increase()
         self.__voted_for = self.id
-        # self._reset_election_timeout()
-        self.__reset_timeout()
+        self.__restart_timeout()
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
@@ -231,7 +227,7 @@ class Raft(AbstractRaftProtocol):
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
     ) -> Tuple[int, bool]:
-        self.__reset_timeout()
+        self.__restart_timeout()
         if term < (current_term := self.current_term):
             return (current_term, False)
         self.__synchronize_term(term)
@@ -245,7 +241,7 @@ class Raft(AbstractRaftProtocol):
         last_log_index: int,
         last_log_term: int,
     ) -> Tuple[int, bool]:
-        self.__reset_timeout()
+        self.__restart_timeout()
         if term < (current_term := self.current_term):
             return (current_term, False)
         self.__synchronize_term(term)
