@@ -40,13 +40,13 @@ message Log {
 /**
  * Client Interaction
  */
-service ClientInteractionService {
+service RaftClusterService {
     rpc ClientRequest(ClientRequestRequest) returns (ClientRequestResponse);
     rpc RegisterClient(RegisterClientRequest) returns (RegisterClientResponse);
     rpc ClientQuery(ClientQueryRequest) returns (ClientQueryResponse);
 }
 
-enum ClientInteractionStatus {
+enum RaftClusterStatus {
     OK = 0;
     NOT_LEADER = 1;
     SESSION_EXPIRED = 2;
@@ -59,7 +59,7 @@ message ClientRequestRequest {
 }
 
 message ClientRequestResponse {
-    ClientInteractionStatus status = 1;     // OK if state machine applied command
+    RaftClusterStatus status = 1;           // OK if state machine applied command
     optional string response = 2;           // state machine output, if successful
     optional string leader_hint = 3;        // address of recent leader, if known
 }
@@ -67,7 +67,7 @@ message ClientRequestResponse {
 message RegisterClientRequest { /* No arguments */ }
 
 message RegisterClientResponse {
-    ClientInteractionStatus status = 1;     // OK if state machine registered client
+    RaftClusterStatus status = 1;           // OK if state machine registered client
     string client_id = 2;                   // unique identifier for client session
     optional string leader_hint = 3;        // address of recent leader, if known
 }
@@ -77,7 +77,7 @@ message ClientQueryRequest {
 }
 
 message ClientQueryResponse {
-    ClientInteractionStatus status = 1;     // OK if state machine processed query
+    RaftClusterStatus status = 1;           // OK if state machine processed query
     optional string response = 2;           // state machine output, if successful
     optional string leader_hint = 3;        // address of recent leader, if known
 }

@@ -124,7 +124,7 @@ class RaftService(object):
         )
 
 
-class ClientInteractionServiceStub(object):
+class RaftClusterServiceStub(object):
     """*
     Client Interaction
     """
@@ -136,23 +136,23 @@ class ClientInteractionServiceStub(object):
             channel: A grpc.Channel.
         """
         self.ClientRequest = channel.unary_unary(
-            "/ClientInteractionService/ClientRequest",
+            "/RaftClusterService/ClientRequest",
             request_serializer=raft__pb2.ClientRequestRequest.SerializeToString,
             response_deserializer=raft__pb2.ClientRequestResponse.FromString,
         )
         self.RegisterClient = channel.unary_unary(
-            "/ClientInteractionService/RegisterClient",
+            "/RaftClusterService/RegisterClient",
             request_serializer=raft__pb2.RegisterClientRequest.SerializeToString,
             response_deserializer=raft__pb2.RegisterClientResponse.FromString,
         )
         self.ClientQuery = channel.unary_unary(
-            "/ClientInteractionService/ClientQuery",
+            "/RaftClusterService/ClientQuery",
             request_serializer=raft__pb2.ClientQueryRequest.SerializeToString,
             response_deserializer=raft__pb2.ClientQueryResponse.FromString,
         )
 
 
-class ClientInteractionServiceServicer(object):
+class RaftClusterServiceServicer(object):
     """*
     Client Interaction
     """
@@ -176,7 +176,7 @@ class ClientInteractionServiceServicer(object):
         raise NotImplementedError("Method not implemented!")
 
 
-def add_ClientInteractionServiceServicer_to_server(servicer, server):
+def add_RaftClusterServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
         "ClientRequest": grpc.unary_unary_rpc_method_handler(
             servicer.ClientRequest,
@@ -195,13 +195,13 @@ def add_ClientInteractionServiceServicer_to_server(servicer, server):
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-        "ClientInteractionService", rpc_method_handlers
+        "RaftClusterService", rpc_method_handlers
     )
     server.add_generic_rpc_handlers((generic_handler,))
 
 
 # This class is part of an EXPERIMENTAL API.
-class ClientInteractionService(object):
+class RaftClusterService(object):
     """*
     Client Interaction
     """
@@ -222,7 +222,7 @@ class ClientInteractionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            "/ClientInteractionService/ClientRequest",
+            "/RaftClusterService/ClientRequest",
             raft__pb2.ClientRequestRequest.SerializeToString,
             raft__pb2.ClientRequestResponse.FromString,
             options,
@@ -251,7 +251,7 @@ class ClientInteractionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            "/ClientInteractionService/RegisterClient",
+            "/RaftClusterService/RegisterClient",
             raft__pb2.RegisterClientRequest.SerializeToString,
             raft__pb2.RegisterClientResponse.FromString,
             options,
@@ -280,7 +280,7 @@ class ClientInteractionService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            "/ClientInteractionService/ClientQuery",
+            "/RaftClusterService/ClientQuery",
             raft__pb2.ClientQueryRequest.SerializeToString,
             raft__pb2.ClientQueryResponse.FromString,
             options,

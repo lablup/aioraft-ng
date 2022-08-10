@@ -14,7 +14,7 @@ _sym_db = _symbol_database.Default()
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n\nraft.proto"\x94\x01\n\x14\x41ppendEntriesRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x11\n\tleader_id\x18\x02 \x01(\t\x12\x16\n\x0eprev_log_index\x18\x03 \x01(\x04\x12\x15\n\rprev_log_term\x18\x04 \x01(\x04\x12\x15\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\x04.Log\x12\x15\n\rleader_commit\x18\x06 \x01(\x04"6\n\x15\x41ppendEntriesResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08"g\n\x12RequestVoteRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0c\x63\x61ndidate_id\x18\x02 \x01(\t\x12\x16\n\x0elast_log_index\x18\x03 \x01(\x04\x12\x15\n\rlast_log_term\x18\x04 \x01(\x04"9\n\x13RequestVoteResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0cvote_granted\x18\x02 \x01(\x08"3\n\x03Log\x12\r\n\x05index\x18\x01 \x01(\x04\x12\x0c\n\x04term\x18\x02 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x03 \x01(\t"P\n\x14\x43lientRequestRequest\x12\x11\n\tclient_id\x18\x01 \x01(\t\x12\x14\n\x0csequence_num\x18\x02 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x03 \x01(\t"\x8f\x01\n\x15\x43lientRequestResponse\x12(\n\x06status\x18\x01 \x01(\x0e\x32\x18.ClientInteractionStatus\x12\x15\n\x08response\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x0b\n\t_responseB\x0e\n\x0c_leader_hint"\x17\n\x15RegisterClientRequest"\x7f\n\x16RegisterClientResponse\x12(\n\x06status\x18\x01 \x01(\x0e\x32\x18.ClientInteractionStatus\x12\x11\n\tclient_id\x18\x02 \x01(\t\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x00\x88\x01\x01\x42\x0e\n\x0c_leader_hint"#\n\x12\x43lientQueryRequest\x12\r\n\x05query\x18\x01 \x01(\t"\x8d\x01\n\x13\x43lientQueryResponse\x12(\n\x06status\x18\x01 \x01(\x0e\x32\x18.ClientInteractionStatus\x12\x15\n\x08response\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x0b\n\t_responseB\x0e\n\x0c_leader_hint*F\n\x17\x43lientInteractionStatus\x12\x06\n\x02OK\x10\x00\x12\x0e\n\nNOT_LEADER\x10\x01\x12\x13\n\x0fSESSION_EXPIRED\x10\x02\x32\x87\x01\n\x0bRaftService\x12>\n\rAppendEntries\x12\x15.AppendEntriesRequest\x1a\x16.AppendEntriesResponse\x12\x38\n\x0bRequestVote\x12\x13.RequestVoteRequest\x1a\x14.RequestVoteResponse2\xd7\x01\n\x18\x43lientInteractionService\x12>\n\rClientRequest\x12\x15.ClientRequestRequest\x1a\x16.ClientRequestResponse\x12\x41\n\x0eRegisterClient\x12\x16.RegisterClientRequest\x1a\x17.RegisterClientResponse\x12\x38\n\x0b\x43lientQuery\x12\x13.ClientQueryRequest\x1a\x14.ClientQueryResponseb\x06proto3'
+    b'\n\nraft.proto"\x94\x01\n\x14\x41ppendEntriesRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x11\n\tleader_id\x18\x02 \x01(\t\x12\x16\n\x0eprev_log_index\x18\x03 \x01(\x04\x12\x15\n\rprev_log_term\x18\x04 \x01(\x04\x12\x15\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\x04.Log\x12\x15\n\rleader_commit\x18\x06 \x01(\x04"6\n\x15\x41ppendEntriesResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08"g\n\x12RequestVoteRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0c\x63\x61ndidate_id\x18\x02 \x01(\t\x12\x16\n\x0elast_log_index\x18\x03 \x01(\x04\x12\x15\n\rlast_log_term\x18\x04 \x01(\x04"9\n\x13RequestVoteResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0cvote_granted\x18\x02 \x01(\x08"3\n\x03Log\x12\r\n\x05index\x18\x01 \x01(\x04\x12\x0c\n\x04term\x18\x02 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x03 \x01(\t"P\n\x14\x43lientRequestRequest\x12\x11\n\tclient_id\x18\x01 \x01(\t\x12\x14\n\x0csequence_num\x18\x02 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x03 \x01(\t"\x89\x01\n\x15\x43lientRequestResponse\x12"\n\x06status\x18\x01 \x01(\x0e\x32\x12.RaftClusterStatus\x12\x15\n\x08response\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x0b\n\t_responseB\x0e\n\x0c_leader_hint"\x17\n\x15RegisterClientRequest"y\n\x16RegisterClientResponse\x12"\n\x06status\x18\x01 \x01(\x0e\x32\x12.RaftClusterStatus\x12\x11\n\tclient_id\x18\x02 \x01(\t\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x00\x88\x01\x01\x42\x0e\n\x0c_leader_hint"#\n\x12\x43lientQueryRequest\x12\r\n\x05query\x18\x01 \x01(\t"\x87\x01\n\x13\x43lientQueryResponse\x12"\n\x06status\x18\x01 \x01(\x0e\x32\x12.RaftClusterStatus\x12\x15\n\x08response\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x18\n\x0bleader_hint\x18\x03 \x01(\tH\x01\x88\x01\x01\x42\x0b\n\t_responseB\x0e\n\x0c_leader_hint*@\n\x11RaftClusterStatus\x12\x06\n\x02OK\x10\x00\x12\x0e\n\nNOT_LEADER\x10\x01\x12\x13\n\x0fSESSION_EXPIRED\x10\x02\x32\x87\x01\n\x0bRaftService\x12>\n\rAppendEntries\x12\x15.AppendEntriesRequest\x1a\x16.AppendEntriesResponse\x12\x38\n\x0bRequestVote\x12\x13.RequestVoteRequest\x1a\x14.RequestVoteResponse2\xd1\x01\n\x12RaftClusterService\x12>\n\rClientRequest\x12\x15.ClientRequestRequest\x1a\x16.ClientRequestResponse\x12\x41\n\x0eRegisterClient\x12\x16.RegisterClientRequest\x1a\x17.RegisterClientResponse\x12\x38\n\x0b\x43lientQuery\x12\x13.ClientQueryRequest\x1a\x14.ClientQueryResponseb\x06proto3'
 )
 
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, globals())
@@ -22,8 +22,8 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "raft_pb2", globals())
 if _descriptor._USE_C_DESCRIPTORS == False:
 
     DESCRIPTOR._options = None
-    _CLIENTINTERACTIONSTATUS._serialized_start = 1001
-    _CLIENTINTERACTIONSTATUS._serialized_end = 1071
+    _RAFTCLUSTERSTATUS._serialized_start = 983
+    _RAFTCLUSTERSTATUS._serialized_end = 1047
     _APPENDENTRIESREQUEST._serialized_start = 15
     _APPENDENTRIESREQUEST._serialized_end = 163
     _APPENDENTRIESRESPONSE._serialized_start = 165
@@ -37,17 +37,17 @@ if _descriptor._USE_C_DESCRIPTORS == False:
     _CLIENTREQUESTREQUEST._serialized_start = 438
     _CLIENTREQUESTREQUEST._serialized_end = 518
     _CLIENTREQUESTRESPONSE._serialized_start = 521
-    _CLIENTREQUESTRESPONSE._serialized_end = 664
-    _REGISTERCLIENTREQUEST._serialized_start = 666
-    _REGISTERCLIENTREQUEST._serialized_end = 689
-    _REGISTERCLIENTRESPONSE._serialized_start = 691
-    _REGISTERCLIENTRESPONSE._serialized_end = 818
-    _CLIENTQUERYREQUEST._serialized_start = 820
-    _CLIENTQUERYREQUEST._serialized_end = 855
-    _CLIENTQUERYRESPONSE._serialized_start = 858
-    _CLIENTQUERYRESPONSE._serialized_end = 999
-    _RAFTSERVICE._serialized_start = 1074
-    _RAFTSERVICE._serialized_end = 1209
-    _CLIENTINTERACTIONSERVICE._serialized_start = 1212
-    _CLIENTINTERACTIONSERVICE._serialized_end = 1427
+    _CLIENTREQUESTRESPONSE._serialized_end = 658
+    _REGISTERCLIENTREQUEST._serialized_start = 660
+    _REGISTERCLIENTREQUEST._serialized_end = 683
+    _REGISTERCLIENTRESPONSE._serialized_start = 685
+    _REGISTERCLIENTRESPONSE._serialized_end = 806
+    _CLIENTQUERYREQUEST._serialized_start = 808
+    _CLIENTQUERYREQUEST._serialized_end = 843
+    _CLIENTQUERYRESPONSE._serialized_start = 846
+    _CLIENTQUERYRESPONSE._serialized_end = 981
+    _RAFTSERVICE._serialized_start = 1050
+    _RAFTSERVICE._serialized_end = 1185
+    _RAFTCLUSTERSERVICE._serialized_start = 1188
+    _RAFTCLUSTERSERVICE._serialized_end = 1397
 # @@protoc_insertion_point(module_scope)

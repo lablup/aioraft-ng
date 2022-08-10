@@ -11,9 +11,9 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 
 DESCRIPTOR: _descriptor.FileDescriptor
-NOT_LEADER: ClientInteractionStatus
-OK: ClientInteractionStatus
-SESSION_EXPIRED: ClientInteractionStatus
+NOT_LEADER: RaftClusterStatus
+OK: RaftClusterStatus
+SESSION_EXPIRED: RaftClusterStatus
 
 class AppendEntriesRequest(_message.Message):
     __slots__ = [
@@ -67,10 +67,10 @@ class ClientQueryResponse(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     leader_hint: str
     response: str
-    status: ClientInteractionStatus
+    status: RaftClusterStatus
     def __init__(
         self,
-        status: _Optional[_Union[ClientInteractionStatus, str]] = ...,
+        status: _Optional[_Union[RaftClusterStatus, str]] = ...,
         response: _Optional[str] = ...,
         leader_hint: _Optional[str] = ...,
     ) -> None: ...
@@ -97,10 +97,10 @@ class ClientRequestResponse(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     leader_hint: str
     response: str
-    status: ClientInteractionStatus
+    status: RaftClusterStatus
     def __init__(
         self,
-        status: _Optional[_Union[ClientInteractionStatus, str]] = ...,
+        status: _Optional[_Union[RaftClusterStatus, str]] = ...,
         response: _Optional[str] = ...,
         leader_hint: _Optional[str] = ...,
     ) -> None: ...
@@ -131,10 +131,10 @@ class RegisterClientResponse(_message.Message):
     STATUS_FIELD_NUMBER: _ClassVar[int]
     client_id: str
     leader_hint: str
-    status: ClientInteractionStatus
+    status: RaftClusterStatus
     def __init__(
         self,
-        status: _Optional[_Union[ClientInteractionStatus, str]] = ...,
+        status: _Optional[_Union[RaftClusterStatus, str]] = ...,
         client_id: _Optional[str] = ...,
         leader_hint: _Optional[str] = ...,
     ) -> None: ...
@@ -167,5 +167,5 @@ class RequestVoteResponse(_message.Message):
         self, term: _Optional[int] = ..., vote_granted: bool = ...
     ) -> None: ...
 
-class ClientInteractionStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):  # type: ignore
+class RaftClusterStatus(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__: _List[str] = []

@@ -2,7 +2,7 @@ import abc
 from typing import Iterable, Tuple
 
 from raft.protos import raft_pb2
-from raft.types import RaftId
+from raft.types import RaftClusterStatus, RaftId
 
 
 class AbstractRaftProtocol(abc.ABC):
@@ -75,13 +75,13 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
 
-class AbstractInteractorProtocol(abc.ABC):
+class AbstractRaftClusterProtocol(abc.ABC):
     @abc.abstractmethod
     def on_client_request(
         self, *, client_id: str, sequence_num: int, command: str
-    ) -> Tuple["raft_pb2.ClientInteractionStatus", str, str]:
+    ) -> Tuple[RaftClusterStatus, str, str]:
         """Receiver implementation:
-        1. Reply NOT_LEADER if not leader, providing hint when avilable
+        1. Reply NOT_LEADER if not leader, providing hint when available
         2. Append command to log, replicate and commit it
         3. Reply SESSION_EXPIRED if no record of clientId or if response for client's sequenceNum already discared
         4. If sequenceNum already processed from client, reply OK with stored response
@@ -98,7 +98,7 @@ class AbstractInteractorProtocol(abc.ABC):
 
         Returns
         -------
-        :param raft.protos.raft_pb2.ClientInteractionStatus status: OK if state machine applied command
+        :param raft.types.RaftClusterStatus status: OK if state machine applied command
         :param str response: state machine output, if successful
         :param str leader_hint: address of recent leader, if known
         -------
@@ -108,7 +108,7 @@ class AbstractInteractorProtocol(abc.ABC):
     @abc.abstractmethod
     def on_register_client(
         self,
-    ) -> Tuple["raft_pb2.ClientInteractionStatus", str, str]:
+    ) -> Tuple[RaftClusterStatus, str, str]:
         """Receiver implementation:
         1. Reply NOT_LEADER if not leader, providing hint when available
         2. Append register command to log, replicate and commit it
@@ -117,7 +117,7 @@ class AbstractInteractorProtocol(abc.ABC):
 
         Returns
         -------
-        :param raft.protos.raft_pb2.ClientInteractionStatus status: OK if state machine registered client
+        :param raft.types.RaftClusterStatus status: OK if state machine registered client
         :param str client_id: unique identifier for client session
         :param str leader_hint: address of recent leader, if known
         -------
@@ -125,9 +125,7 @@ class AbstractInteractorProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def on_client_query(
-        self, *, query: str
-    ) -> Tuple["raft_pb2.ClientInteractionStatus", str, str]:
+    def on_client_query(self, *, query: str) -> Tuple[RaftClusterStatus, str, str]:
         """Receiver implementation:
         1. Reply NOT_LEADER if not leader, providing hint when available
         2. Wait until last committed entry is from this leader's term
@@ -144,7 +142,7 @@ class AbstractInteractorProtocol(abc.ABC):
 
         Returns
         -------
-        :param raft.protos.raft_pb2.ClientInteractionStatus status: OK if state machine processed query
+        :param raft.types.RaftClusterStatus status: OK if state machine processed query
         :param str response: state machine output, if successful
         :param str leader_hint: address of recent leader, if known
         -------
