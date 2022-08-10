@@ -37,6 +37,43 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
 
+class MemoryReplicatedLog(AbstractReplicatedLog):
+    def __init__(self, *args, **kwargs):
+        self._logs = []
+
+    async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
+        self._logs.extend(entries)
+        self._logs.sort(key=lambda l: l.index)
+
+    async def get(self, index: int) -> Optional[raft_pb2.Log]:
+        return next(filter(lambda log: log.index == index, self._logs), None)
+
+    async def last(self) -> Optional[raft_pb2.Log]:
+        return self._logs[-1] if self._logs else None
+
+    async def slice(
+        self, start: int, stop: Optional[int] = None
+    ) -> Tuple[raft_pb2.Log, ...]:
+        start_idx, stop_idx = 0, None
+        for idx, log in enumerate(self._logs):
+            if log.index == start:
+                start_idx = idx
+            if log.index == stop:
+                stop_idx = idx
+        return tuple(self._logs[start_idx:stop_idx])
+
+    async def splice(self, start: int) -> None:
+        start_idx = None
+        for idx, log in enumerate(self._logs):
+            if log.index == start:
+                start_idx = idx
+                break
+        self._logs = self._logs[:start_idx]
+
+    async def count(self) -> int:
+        return len(self._logs)
+
+
 class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
     def __init__(self, *args, **kwargs):
         self._id: str = kwargs.get("id_") or str(uuid.uuid4())

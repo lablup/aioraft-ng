@@ -2,60 +2,115 @@ import random
 
 import pytest
 
-from raft.aio.logs import SqliteReplicatedLog
+from raft.aio.logs import MemoryReplicatedLog, SqliteReplicatedLog
 from raft.protos import raft_pb2
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio(log: SqliteReplicatedLog) -> None:
+async def test_memory_replicated_log(memory_replicated_log: MemoryReplicatedLog) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
         for i in range(1, n + 1)
     )
-    await log.append(entries)
+    await memory_replicated_log.append(entries)
 
-    count = await log.count()
+    count = await memory_replicated_log.count()
     assert count == len(entries)
 
     random_index = random.randint(1, count)
-    row = await log.get(random_index)
+    row = await memory_replicated_log.get(random_index)
     assert row is not None
     assert row.index == random_index
 
-    row = await log.last()
+    row = await memory_replicated_log.last()
     assert row is not None
     assert row.index == n
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio__slice(log: SqliteReplicatedLog) -> None:
+async def test_memory_replicated_log__slice(memory_replicated_log: MemoryReplicatedLog) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
         for i in range(1, n + 1)
     )
-    await log.append(entries)
+    await memory_replicated_log.append(entries)
 
     random_start = random.randint(1, n)
     random_stop = random.randint(random_start + 1, n + 1)
-    rows = await log.slice(random_start, random_stop)
+    rows = await memory_replicated_log.slice(random_start, random_stop)
     assert len(rows) == (random_stop - random_start)
     assert rows[0].index == random_start
     assert rows[-1].index == (random_stop - 1)
 
 
 @pytest.mark.asyncio
-async def test_sqlite_replicated_log_aio__splice(log: SqliteReplicatedLog) -> None:
+async def test_memory_replicated_log__splice(memory_replicated_log: MemoryReplicatedLog) -> None:
     n = 16
     entries = tuple(
         raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
         for i in range(1, n + 1)
     )
-    await log.append(entries)
+    await memory_replicated_log.append(entries)
 
     random_start = random.randint(1, n)
-    await log.splice(random_start)
+    await memory_replicated_log.splice(random_start)
 
-    count = await log.count()
+    count = await memory_replicated_log.count()
+    assert count == (random_start - 1)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_replicated_log_aio(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+    n = 16
+    entries = tuple(
+        raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
+        for i in range(1, n + 1)
+    )
+    await sqlite_replicated_log.append(entries)
+
+    count = await sqlite_replicated_log.count()
+    assert count == len(entries)
+
+    random_index = random.randint(1, count)
+    row = await sqlite_replicated_log.get(random_index)
+    assert row is not None
+    assert row.index == random_index
+
+    row = await sqlite_replicated_log.last()
+    assert row is not None
+    assert row.index == n
+
+
+@pytest.mark.asyncio
+async def test_sqlite_replicated_log_aio__slice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+    n = 16
+    entries = tuple(
+        raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
+        for i in range(1, n + 1)
+    )
+    await sqlite_replicated_log.append(entries)
+
+    random_start = random.randint(1, n)
+    random_stop = random.randint(random_start + 1, n + 1)
+    rows = await sqlite_replicated_log.slice(random_start, random_stop)
+    assert len(rows) == (random_stop - random_start)
+    assert rows[0].index == random_start
+    assert rows[-1].index == (random_stop - 1)
+
+
+@pytest.mark.asyncio
+async def test_sqlite_replicated_log_aio__splice(sqlite_replicated_log: SqliteReplicatedLog) -> None:
+    n = 16
+    entries = tuple(
+        raft_pb2.Log(index=i, term=1, command="INCR image-pull-rate")
+        for i in range(1, n + 1)
+    )
+    await sqlite_replicated_log.append(entries)
+
+    random_start = random.randint(1, n)
+    await sqlite_replicated_log.splice(random_start)
+
+    count = await sqlite_replicated_log.count()
     assert count == (random_start - 1)
