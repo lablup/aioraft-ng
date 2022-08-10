@@ -1,12 +1,12 @@
 import argparse
 from pathlib import Path
 from threading import Thread
-from typing import Coroutine, List
+from typing import Coroutine, Final, List
 
 import tomli
 
 from raft import Raft
-from raft.client import GrpcRaftClient
+from raft.peers import AbstractRaftPeer, GrpcRaftPeer
 from raft.server import GrpcRaftServer
 from raft.utils import build_loopback_ip
 
@@ -37,8 +37,8 @@ def main():
     )
 
     server = GrpcRaftServer()
-    client = GrpcRaftClient()
-    raft = Raft(public_id, server=server, client=client, configuration=configuration)
+    peer: Final[AbstractRaftPeer] = GrpcRaftPeer()
+    raft = Raft(public_id, server=server, peer=peer, configuration=configuration)
 
     threads = [
         Thread(

@@ -2,12 +2,12 @@ import argparse
 import asyncio
 from contextlib import suppress
 from pathlib import Path
-from typing import Coroutine, List
+from typing import Coroutine, Final, List
 
 import tomli
 
 from raft.aio import Raft
-from raft.aio.client import GrpcRaftClient
+from raft.aio.peers import AbstractRaftPeer, GrpcRaftPeer
 from raft.aio.server import GrpcRaftServer
 from raft.utils import build_loopback_ip
 
@@ -38,9 +38,9 @@ async def _main():
     )
 
     server = GrpcRaftServer()
-    client = GrpcRaftClient()
+    peer: Final[AbstractRaftPeer] = GrpcRaftPeer()
     raft = await Raft.new(
-        public_id, server=server, client=client, configuration=configuration
+        public_id, server=server, peer=peer, configuration=configuration
     )
 
     done, pending = await asyncio.wait(

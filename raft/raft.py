@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Dict, Final, Iterable, Optional, Set, Tuple
 
-from raft.client import AbstractRaftClient
+from raft.peers import AbstractRaftPeer
 from raft.protocols import AbstractRaftProtocol
 from raft.protos import raft_pb2
 from raft.server import AbstractRaftServer
@@ -54,13 +54,13 @@ class Raft(AbstractRaftProtocol):
         self,
         id_: RaftId,
         server: AbstractRaftServer,
-        client: AbstractRaftClient,
+        peer: AbstractRaftPeer,
         configuration: Iterable[RaftId],
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
         self.__server: Final[AbstractRaftServer] = server
-        self.__client: Final[AbstractRaftClient] = client
+        self.__peer: Final[AbstractRaftPeer] = peer
         self.__configuration: Set[RaftId] = set(configuration)
 
         self.__election_timeout: Final[float] = randrangef(0.15, 0.3)
@@ -176,7 +176,7 @@ class Raft(AbstractRaftProtocol):
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
             terms, grants = zip(
-                *pool.map(lambda k: self.__client.request_vote(**k), kwargs)
+                *pool.map(lambda k: self.__peer.request_vote(**k), kwargs)
             )
 
         for term in terms:
@@ -207,7 +207,7 @@ class Raft(AbstractRaftProtocol):
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
             terms, successes = zip(
-                *pool.map(lambda k: self.__client.append_entries(**k), kwargs)
+                *pool.map(lambda k: self.__peer.append_entries(**k), kwargs)
             )
 
     def has_leadership(self) -> bool:

@@ -2,23 +2,23 @@ import time
 from threading import Thread
 
 from raft import Raft
-from raft.client import GrpcRaftClient
+from raft.peers import GrpcRaftPeer
 from raft.server import GrpcRaftServer
 
 
 def test_raft_leader_election():
     n = 5
     ports = tuple(range(50051, 50051 + n))
-    configurations = [f"127.0.0.1:{port}" for port in ports]
+    configuration = [f"127.0.0.1:{port}" for port in ports]
     servers = [GrpcRaftServer() for _ in range(n)]
     raft_nodes = [
         Raft(
             f"raft-{i}",
-            server,
-            GrpcRaftClient(),
-            filter(lambda x: x != addr, configurations),
+            server=server,
+            peer=GrpcRaftPeer(),
+            configuration=filter(lambda x: x != addr, configuration),
         )
-        for i, (server, addr) in enumerate(zip(servers, configurations))
+        for i, (server, addr) in enumerate(zip(servers, configuration))
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 

@@ -4,7 +4,7 @@ import math
 from datetime import datetime
 from typing import Dict, Final, Iterable, Optional, Set, Tuple
 
-from raft.aio.client import AbstractRaftClient
+from raft.aio.peers import AbstractRaftPeer
 from raft.aio.protocols import AbstractRaftProtocol
 from raft.aio.server import AbstractRaftServer
 from raft.protos import raft_pb2
@@ -52,13 +52,13 @@ class Raft(aobject, AbstractRaftProtocol):
         self,
         id_: RaftId,
         server: AbstractRaftServer,
-        client: AbstractRaftClient,
+        peer: AbstractRaftPeer,
         configuration: Iterable[RaftId],
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
         self.__server: Final[AbstractRaftServer] = server
-        self.__client: Final[AbstractRaftClient] = client
+        self.__peer: Final[AbstractRaftPeer] = peer
         self.__configuration: Set[RaftId] = set(configuration)
 
         self.__election_timeout: Final[float] = randrangef(0.15, 0.3)
@@ -167,7 +167,7 @@ class Raft(aobject, AbstractRaftProtocol):
             *await asyncio.gather(
                 *[
                     asyncio.create_task(
-                        self.__client.request_vote(
+                        self.__peer.request_vote(
                             to=server,
                             term=current_term,
                             candidate_id=self.id,
@@ -198,7 +198,7 @@ class Raft(aobject, AbstractRaftProtocol):
             *await asyncio.gather(
                 *[
                     asyncio.create_task(
-                        self.__client.append_entries(
+                        self.__peer.append_entries(
                             to=server,
                             term=self.current_term,
                             leader_id=self.id,
