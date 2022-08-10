@@ -162,7 +162,8 @@ class Raft(AbstractRaftProtocol):
     def start_election(self) -> bool:
         self.__current_term.increase()
         self.__voted_for = self.id
-        self._reset_election_timeout()
+        # self._reset_election_timeout()
+        self.__reset_timeout()
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")

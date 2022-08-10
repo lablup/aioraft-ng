@@ -161,7 +161,8 @@ class Raft(aobject, AbstractRaftProtocol):
     async def start_election(self) -> bool:
         self.__current_term.increase()
         self.__voted_for = self.id
-        await self._reset_election_timeout()
+        # await self._reset_election_timeout()
+        await self.__reset_timeout()
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
