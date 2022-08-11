@@ -2,7 +2,7 @@ import abc
 from typing import Iterable, Tuple
 
 from raft.protos import raft_pb2
-from raft.types import RaftClusterStatus, RaftId
+from raft.types import ClientQueryResponse, ClientRequestResponse, RaftId, RegisterClientResponse
 
 
 class AbstractRaftProtocol(abc.ABC):
@@ -79,7 +79,7 @@ class AbstractRaftClusterProtocol(abc.ABC):
     @abc.abstractmethod
     async def on_client_request(
         self, *, client_id: str, sequence_num: int, command: str
-    ) -> Tuple[RaftClusterStatus, str, RaftId]:
+    ) -> ClientRequestResponse:
         """Receiver implementation:
         1. Reply NOT_LEADER if not leader, providing hint when available
         2. Append command to log, replicate and commit it
@@ -108,7 +108,7 @@ class AbstractRaftClusterProtocol(abc.ABC):
     @abc.abstractmethod
     async def on_register_client(
         self,
-    ) -> Tuple[RaftClusterStatus, str, RaftId]:
+    ) -> RegisterClientResponse:
         """Receiver implementation:
         1. Reply NOT_LEADER if not leader, providing hint when available
         2. Append register command to log, replicate and commit it
@@ -125,9 +125,7 @@ class AbstractRaftClusterProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def on_client_query(
-        self, *, query: str
-    ) -> Tuple[RaftClusterStatus, str, RaftId]:
+    async def on_client_query(self, *, query: str) -> ClientQueryResponse:
         """Receiver implementation:
         1. Reply NOT_LEADER if not leader, providing hint when available
         2. Wait until last committed entry is from this leader's term

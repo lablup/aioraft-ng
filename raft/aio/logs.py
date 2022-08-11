@@ -15,6 +15,10 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def commit(self, index: int) -> None:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def get(self, index: int) -> Optional[raft_pb2.Log]:
         raise NotImplementedError()
 
@@ -44,6 +48,9 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
     async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
         self._logs.extend(entries)
         self._logs.sort(key=lambda l: l.index)
+
+    async def commit(self, index: int) -> None:
+        pass
 
     async def get(self, index: int) -> Optional[raft_pb2.Log]:
         for log in self._logs:
@@ -109,6 +116,15 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
             cursor = await conn.cursor()
             await cursor.executemany(
                 f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows
+            )
+            await conn.commit()
+
+    async def commit(self, index: int) -> None:
+        async with aiosqlite.connect(self._database) as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(
+                f"UPDATE {self._table} SET committed = TRUE WHERE idx = :index",
+                {"index": index},
             )
             await conn.commit()
 

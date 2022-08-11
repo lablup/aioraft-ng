@@ -13,7 +13,11 @@ class AbstractRaftServer(abc.ABC):
         raise NotImplementedError()
 
 
-class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
+class GrpcRaftServer(
+    AbstractRaftServer,
+    raft_pb2_grpc.RaftServiceServicer,
+    raft_pb2_grpc.RaftClusterServiceServicer,
+):
     """
     A gRPC-based implementation of `AbstractRaftServer`.
     """
@@ -83,3 +87,26 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
             last_log_term=request.last_log_term,
         )
         return raft_pb2.RequestVoteResponse(term=term, vote_granted=vote_granted)
+
+    """
+    raft_pb2_grpc.RaftClusterServiceServicer
+    """
+
+    async def ClientRequest(
+        self,
+        request: raft_pb2.ClientRequestRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> raft_pb2.ClientRequestResponse:
+        pass
+
+    async def RegisterClient(
+        self,
+        request: raft_pb2.RegisterClientRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> raft_pb2.RegisterClientResponse:
+        pass
+
+    async def ClientQuery(
+        self, request: raft_pb2.ClientQueryRequest, context: grpc.aio.ServicerContext
+    ) -> raft_pb2.ClientQueryResponse:
+        pass

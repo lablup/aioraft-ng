@@ -1,5 +1,6 @@
 import enum
-from typing import Type, TypeVar
+from dataclasses import asdict, dataclass
+from typing import Any, Dict, Optional, Type, TypeVar
 
 RaftId = str
 
@@ -54,3 +55,33 @@ class aobject(object):
         the vanilla Python classes.
         """
         pass
+
+
+@dataclass
+class ClientRequestResponse:
+    status: RaftClusterStatus
+    response: Optional[str] = None
+    leader_hint: Optional[str] = None
+
+    def dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RegisterClientResponse:
+    status: RaftClusterStatus
+    client_id: str
+    leader_hint: Optional[str] = None
+
+    def dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class ClientQueryResponse:
+    status: RaftClusterStatus
+    response: Optional[str] = None
+    leader_hint: Optional[str] = None
+
+    def dict(self) -> Dict[str, Any]:
+        return asdict(self)

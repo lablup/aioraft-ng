@@ -4,11 +4,21 @@ import math
 from datetime import datetime
 from typing import Dict, Final, Iterable, Optional, Set, Tuple
 
+from raft.aio.logs import AbstractReplicatedLog, MemoryReplicatedLog
 from raft.aio.peers import AbstractRaftPeer
-from raft.aio.protocols import AbstractRaftProtocol
+from raft.aio.protocols import AbstractRaftClusterProtocol, AbstractRaftProtocol
+from raft.aio.resp import RespInterpreter
 from raft.aio.server import AbstractRaftServer
 from raft.protos import raft_pb2
-from raft.types import RaftId, RaftState, aobject
+from raft.types import (
+    ClientQueryResponse,
+    ClientRequestResponse,
+    RaftClusterStatus,
+    RaftId,
+    RaftState,
+    RegisterClientResponse,
+    aobject,
+)
 from raft.utils import AtomicInteger, randrangef
 
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +26,7 @@ logging.basicConfig(level=logging.INFO)
 __all__ = ("Raft",)
 
 
-class Raft(aobject, AbstractRaftProtocol):
+class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
     """Rules for Servers
     All Servers
     - If commitIndex > lastApplied: increment lastApplied, apply log[lastApplied] to state machine
@@ -61,8 +71,12 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__peer: Final[AbstractRaftPeer] = peer
         self.__configuration: Set[RaftId] = set(configuration)
 
+        self.__leader_id: Optional[RaftId] = None
+
         self.__election_timeout: Final[float] = randrangef(0.15, 0.3)
         self.__heartbeat_timeout: Final[float] = 0.1
+
+        self.__interpreter = RespInterpreter()
 
         server.bind(self)
 
@@ -109,7 +123,7 @@ class Raft(aobject, AbstractRaftProtocol):
         """
         self.__current_term: AtomicInteger = AtomicInteger(0)
         self.__voted_for: Optional[RaftId] = None
-        self.__log: Iterable[raft_pb2.Log] = []
+        self.__log: AbstractReplicatedLog = MemoryReplicatedLog()
 
     async def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
@@ -192,6 +206,9 @@ class Raft(aobject, AbstractRaftProtocol):
         return False
 
     async def _publish_heartbeat(self) -> None:
+        await self._replicate_logs(entries=())
+
+    async def _replicate_logs(self, entries: Iterable[raft_pb2.Log]) -> None:
         if not self.has_leadership():
             return
         terms, successes = zip(
@@ -213,6 +230,13 @@ class Raft(aobject, AbstractRaftProtocol):
             )
         )
 
+    async def _commit_log(self, index: int) -> Optional[int]:
+        if not (log := await self.__log.get(index=index)):
+            return None
+        output = self.__interpreter.execute(log.command)
+        await self.__log.commit(index=index)
+        return output
+
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
 
@@ -233,6 +257,7 @@ class Raft(aobject, AbstractRaftProtocol):
         await self.__restart_timeout()
         if term < (current_term := self.current_term):
             return (current_term, False)
+        self.__leader_id = leader_id
         await self.__synchronize_term(term)
         return (self.current_term, True)
 
@@ -253,6 +278,44 @@ class Raft(aobject, AbstractRaftProtocol):
             self.__voted_for = candidate_id
             return (self.current_term, True)
         return (self.current_term, False)
+
+    """
+    AbstractRaftClusterProtocol
+    """
+
+    async def on_client_request(
+        self, *, client_id: str, sequence_num: int, command: str
+    ) -> ClientRequestResponse:
+        # 1. Reply NOT_LEADER if not leader, providing hint when available
+        if not self.has_leadership():
+            return ClientRequestResponse(
+                status=RaftClusterStatus.NOT_LEADER,
+                response=None,
+                leader_hint=self.__leader_id,
+            )
+        # 2. Append command to log, replicate and commit it
+        index = await self.__log.count() + 1
+        entries: Iterable[raft_pb2.Log] = [
+            raft_pb2.Log(index=index, term=self.current_term, command=command)
+        ]
+        await self.__log.append(entries)
+        await self._replicate_logs(entries=entries)
+        output = await self._commit_log(index=index)
+        # 3. Reply SESSION_EXPIRED if no record of clientId or if response for client's sequenceNum already discarded
+        # 4. If sequenceNum already processed from client, reply OK with stored response
+        # 5. Apply command in log order
+        # 6. Save state machine output with sequenceNum for client, discard any prior response for client
+        # 7. Reply OK with state machine output
+        # output = ""
+        return ClientRequestResponse(
+            status=RaftClusterStatus.OK, response=str(output), leader_hint=self.id
+        )
+
+    async def on_register_client(self) -> RegisterClientResponse:
+        pass
+
+    async def on_client_query(self, *, query: str) -> ClientQueryResponse:
+        pass
 
     @property
     def id(self) -> RaftId:
