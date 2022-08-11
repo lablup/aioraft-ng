@@ -4,7 +4,11 @@ from typing import Optional
 import grpc
 
 from raft.protos import raft_pb2, raft_pb2_grpc
-from raft.types import ClientQueryResponse, ClientRequestResponse, RegisterClientResponse
+from raft.types import (
+    ClientQueryResponse,
+    ClientRequestResponse,
+    RegisterClientResponse,
+)
 
 
 class AbstractRaftClient(abc.ABC):

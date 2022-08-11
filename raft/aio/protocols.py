@@ -2,7 +2,12 @@ import abc
 from typing import Iterable, Tuple
 
 from raft.protos import raft_pb2
-from raft.types import ClientQueryResponse, ClientRequestResponse, RaftId, RegisterClientResponse
+from raft.types import (
+    ClientQueryResponse,
+    ClientRequestResponse,
+    RaftId,
+    RegisterClientResponse,
+)
 
 
 class AbstractRaftProtocol(abc.ABC):
