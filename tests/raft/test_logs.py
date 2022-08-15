@@ -24,6 +24,12 @@ def test_memory_replicated_log(memory_replicated_log: MemoryReplicatedLog) -> No
     assert row is not None
     assert row.index == n
 
+    random_commit_index = random.randint(1, count)
+    memory_replicated_log.commit(index=random_commit_index)
+    committed_row = memory_replicated_log.last(committed=True)
+    assert committed_row is not None
+    assert committed_row.index == random_commit_index
+
 
 def test_memory_replicated_log__slice(
     memory_replicated_log: MemoryReplicatedLog,
@@ -79,6 +85,12 @@ def test_sqlite_replicated_log(sqlite_replicated_log: SqliteReplicatedLog) -> No
     row = sqlite_replicated_log.last()
     assert row is not None
     assert row.index == n
+
+    random_commit_index = random.randint(1, count)
+    sqlite_replicated_log.commit(index=random_commit_index)
+    committed_row = sqlite_replicated_log.last(committed=True)
+    assert committed_row is not None
+    assert committed_row.index == random_commit_index
 
 
 def test_sqlite_replicated_log__slice(

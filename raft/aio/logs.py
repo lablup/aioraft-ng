@@ -1,21 +1,22 @@
 import abc
 import uuid
+from multiprocessing import Lock
 from pathlib import Path
-from typing import Final, Iterable, Optional, Tuple
+from typing import Final, Iterable, List, Optional, Tuple
 
 import aiosqlite
 
 from raft.protos import raft_pb2
-from raft.types import aobject
+from raft.types import Log, aobject
 
 
 class AbstractReplicatedLog(abc.ABC):
     @abc.abstractmethod
-    async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
+    async def append(self, entries: Iterable[raft_pb2.Log]) -> bool:
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def commit(self, index: int) -> None:
+    async def commit(self, index: int) -> bool:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -23,7 +24,7 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def last(self) -> Optional[raft_pb2.Log]:
+    async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -43,42 +44,56 @@ class AbstractReplicatedLog(abc.ABC):
 
 class MemoryReplicatedLog(AbstractReplicatedLog):
     def __init__(self, *args, **kwargs):
-        self._logs = []
+        self._lock = Lock()
+        self._logs: List[Log] = []
 
-    async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
-        self._logs.extend(entries)
-        self._logs.sort(key=lambda l: l.index)
+    async def append(self, entries: Iterable[raft_pb2.Log]) -> bool:
+        with self._lock:
+            self._logs.extend(map(lambda x: Log.parse(x), entries))
+            self._logs.sort(key=lambda x: x.index)
+        return True
 
-    async def commit(self, index: int) -> None:
-        pass
+    async def commit(self, index: int) -> bool:
+        with self._lock:
+            for entry in self._logs:
+                if entry.index <= index:
+                    entry.committed = True
+        return True
 
     async def get(self, index: int) -> Optional[raft_pb2.Log]:
-        for log in self._logs:
-            if log.index == index:
-                return log
+        with self._lock:
+            for entry in self._logs:
+                if entry.index == index:
+                    return entry.proto()
         return None
 
-    async def last(self) -> Optional[raft_pb2.Log]:
-        return self._logs[-1] if self._logs else None
+    async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
+        with self._lock:
+            if committed:
+                entries = [entry for entry in self._logs if entry.committed]
+                return entries[-1].proto() if entries else None
+            return self._logs[-1].proto() if self._logs else None
 
     async def slice(
         self, start: int, stop: Optional[int] = None
     ) -> Tuple[raft_pb2.Log, ...]:
-        start_idx, stop_idx = 0, None
-        for idx, log in enumerate(self._logs):
-            if log.index == start:
-                start_idx = idx
-            if log.index == stop:
-                stop_idx = idx
-        return tuple(self._logs[start_idx:stop_idx])
+        with self._lock:
+            start_idx, stop_idx = 0, None
+            for idx, log in enumerate(self._logs):
+                if log.index == start:
+                    start_idx = idx
+                if log.index == stop:
+                    stop_idx = idx
+            return tuple(map(lambda x: x.proto(), self._logs[start_idx:stop_idx]))
 
     async def splice(self, start: int) -> None:
-        start_idx = None
-        for idx, log in enumerate(self._logs):
-            if log.index == start:
-                start_idx = idx
-                break
-        self._logs = self._logs[:start_idx]
+        with self._lock:
+            start_idx = None
+            for idx, log in enumerate(self._logs):
+                if log.index == start:
+                    start_idx = idx
+                    break
+            self._logs = self._logs[:start_idx]
 
     async def count(self) -> int:
         return len(self._logs)
@@ -108,7 +123,7 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
         if self._volatile:
             self._database.unlink(missing_ok=True)
 
-    async def append(self, entries: Iterable[raft_pb2.Log]) -> None:
+    async def append(self, entries: Iterable[raft_pb2.Log]) -> bool:
         rows = tuple(
             (entry.index, entry.term, entry.command, False) for entry in entries
         )
@@ -118,15 +133,17 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
                 f"INSERT INTO {self._table} VALUES (?, ?, ?, ?)", rows
             )
             await conn.commit()
+        return True
 
-    async def commit(self, index: int) -> None:
+    async def commit(self, index: int) -> bool:
         async with aiosqlite.connect(self._database) as conn:
             cursor = await conn.cursor()
             await cursor.execute(
-                f"UPDATE {self._table} SET committed = TRUE WHERE idx = :index",
+                f"UPDATE {self._table} SET committed = TRUE WHERE idx <= :index",
                 {"index": index},
             )
             await conn.commit()
+        return True
 
     async def get(self, index: int) -> Optional[raft_pb2.Log]:
         async with aiosqlite.connect(self._database) as conn:
@@ -138,11 +155,13 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
                 return raft_pb2.Log(index=row[0], term=row[1], command=row[2])
             return None
 
-    async def last(self) -> Optional[raft_pb2.Log]:
+    async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
         async with aiosqlite.connect(self._database) as conn:
             cursor = await conn.cursor()
             cursor = await cursor.execute(
-                f"SELECT * FROM {self._table} ORDER BY idx DESC LIMIT 1"
+                f"SELECT * FROM {self._table}"
+                f" {'WHERE committed = TRUE' if committed else ''}"
+                " ORDER BY idx DESC LIMIT 1"
             )
             if row := await cursor.fetchone():
                 return raft_pb2.Log(index=row[0], term=row[1], command=row[2])

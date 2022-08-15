@@ -2,6 +2,8 @@ import enum
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional, Type, TypeVar
 
+from raft.protos import raft_pb2
+
 RaftId = str
 
 
@@ -58,6 +60,21 @@ class aobject(object):
 
 
 @dataclass
+class Log:
+    index: int
+    term: int
+    command: Optional[str] = None
+    committed: bool = False
+
+    @staticmethod
+    def parse(proto: raft_pb2.Log) -> "Log":
+        return Log(index=proto.index, term=proto.term, command=proto.command)
+
+    def proto(self) -> raft_pb2.Log:
+        return raft_pb2.Log(index=self.index, term=self.term, command=self.command)
+
+
+@dataclass
 class ClientRequestResponse:
     status: RaftClusterStatus
     response: Optional[str] = None
@@ -70,7 +87,7 @@ class ClientRequestResponse:
 @dataclass
 class RegisterClientResponse:
     status: RaftClusterStatus
-    client_id: str
+    client_id: Optional[str] = None
     leader_hint: Optional[str] = None
 
     def dict(self) -> Dict[str, Any]:

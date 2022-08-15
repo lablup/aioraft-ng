@@ -68,7 +68,7 @@ message RegisterClientRequest { /* No arguments */ }
 
 message RegisterClientResponse {
     RaftClusterStatus status = 1;           // OK if state machine registered client
-    string client_id = 2;                   // unique identifier for client session
+    optional string client_id = 2;          // unique identifier for client session
     optional string leader_hint = 3;        // address of recent leader, if known
 }
 

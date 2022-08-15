@@ -29,6 +29,12 @@ async def test_memory_replicated_log(
     assert row is not None
     assert row.index == n
 
+    random_commit_index = random.randint(1, count)
+    await memory_replicated_log.commit(index=random_commit_index)
+    committed_row = await memory_replicated_log.last(committed=True)
+    assert committed_row is not None
+    assert committed_row.index == random_commit_index
+
 
 @pytest.mark.asyncio
 async def test_memory_replicated_log__slice(
@@ -89,6 +95,12 @@ async def test_sqlite_replicated_log_aio(
     row = await sqlite_replicated_log.last()
     assert row is not None
     assert row.index == n
+
+    random_commit_index = random.randint(1, count)
+    await sqlite_replicated_log.commit(index=random_commit_index)
+    committed_row = await sqlite_replicated_log.last(committed=True)
+    assert committed_row is not None
+    assert committed_row.index == random_commit_index
 
 
 @pytest.mark.asyncio
