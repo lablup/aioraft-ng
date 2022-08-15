@@ -61,7 +61,7 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
         with self._lock:
             for log in self._logs:
                 if log.index == index:
-                    return log
+                    return log.proto()
         return None
 
     def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
@@ -79,7 +79,7 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
                     start_idx = idx
                 if log.index == stop:
                     stop_idx = idx
-            return tuple(self._logs[start_idx:stop_idx])
+            return tuple(map(lambda x: x.proto(), self._logs[start_idx:stop_idx]))
 
     def splice(self, start: int) -> None:
         with self._lock:
