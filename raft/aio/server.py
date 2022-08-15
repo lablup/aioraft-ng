@@ -3,13 +3,18 @@ from typing import Coroutine, List, Optional
 
 import grpc
 
-from raft.aio.protocols import AbstractRaftProtocol
+from raft.aio.protocols import AbstractRaftClusterProtocol, AbstractRaftProtocol
 from raft.protos import raft_pb2, raft_pb2_grpc
+from raft.types import RaftClusterStatus
 
 
 class AbstractRaftServer(abc.ABC):
     @abc.abstractmethod
-    def bind(self, protocol: AbstractRaftProtocol):
+    def bind(
+        self,
+        raft_protocol: AbstractRaftProtocol,
+        raft_cluster_protocol: AbstractRaftClusterProtocol,
+    ):
         raise NotImplementedError()
 
 
@@ -23,11 +28,17 @@ class GrpcRaftServer(
     """
 
     def __init__(self, credentials: Optional[grpc.ServerCredentials] = None):
-        self.__protocol: Optional[AbstractRaftProtocol] = None
+        self.__raft_protocol: Optional[AbstractRaftProtocol] = None
+        self.__raft_cluster_protocol: Optional[AbstractRaftClusterProtocol] = None
         self.__credentials: Optional[grpc.ServerCredentials] = credentials
 
-    def bind(self, protocol: AbstractRaftProtocol):
-        self.__protocol = protocol
+    def bind(
+        self,
+        raft_protocol: AbstractRaftProtocol,
+        raft_cluster_protocol: AbstractRaftClusterProtocol,
+    ):
+        self.__raft_protocol = raft_protocol
+        self.__raft_cluster_protocol = raft_cluster_protocol
 
     async def run(
         self,
@@ -37,6 +48,7 @@ class GrpcRaftServer(
     ):
         server = grpc.aio.server()
         raft_pb2_grpc.add_RaftServiceServicer_to_server(self, server)
+        raft_pb2_grpc.add_RaftClusterServiceServicer_to_server(self, server)
 
         if credentials := self.__credentials:
             server.add_secure_port(f"{host}:{port}", credentials)
@@ -61,7 +73,7 @@ class GrpcRaftServer(
         request: raft_pb2.AppendEntriesRequest,
         context: grpc.aio.ServicerContext,
     ) -> raft_pb2.AppendEntriesResponse:
-        if (protocol := self.__protocol) is None:
+        if (protocol := self.__raft_protocol) is None:
             return raft_pb2.AppendEntriesResponse(term=request.term, success=False)
         term, success = await protocol.on_append_entries(
             term=request.term,
@@ -78,7 +90,7 @@ class GrpcRaftServer(
         request: raft_pb2.RequestVoteRequest,
         context: grpc.aio.ServicerContext,
     ) -> raft_pb2.RequestVoteResponse:
-        if (protocol := self.__protocol) is None:
+        if (protocol := self.__raft_protocol) is None:
             return raft_pb2.RequestVoteResponse(term=request.term, vote_granted=False)
         term, vote_granted = await protocol.on_request_vote(
             term=request.term,
@@ -97,7 +109,20 @@ class GrpcRaftServer(
         request: raft_pb2.ClientRequestRequest,
         context: grpc.aio.ServicerContext,
     ) -> raft_pb2.ClientRequestResponse:
-        pass
+        if (protocol := self.__raft_cluster_protocol) is None:
+            return raft_pb2.ClientRequestResponse(
+                status=raft_pb2.RaftClusterStatus.NOT_LEADER, leader_hint=None  # type: ignore
+            )
+        response = await protocol.on_client_request(
+            client_id=request.client_id,
+            sequence_num=request.sequence_num,
+            command=request.command,
+        )
+        return raft_pb2.ClientRequestResponse(
+            status=response.status.value,  # type: ignore
+            response=response.response,
+            leader_hint=response.leader_hint,
+        )
 
     async def RegisterClient(
         self,
