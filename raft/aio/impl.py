@@ -89,24 +89,6 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         await self.__change_state(RaftState.FOLLOWER)
         await self._restart_timeout()
 
-    async def main(self) -> None:
-        while True:
-            match self.__state:
-                case RaftState.FOLLOWER:
-                    await FollowerTask.run(self)
-                case RaftState.CANDIDATE:
-                    while self.__state is RaftState.CANDIDATE:
-                        await CandidateTask.run(self)
-                        await asyncio.sleep(self.__election_timeout)
-                case RaftState.LEADER:
-                    count = await self.__log.count()
-                    for i in range(1, count + 1):
-                        if entry := await self.__log.get(i):
-                            self.__fsm.apply(command=entry.command)
-                            await self.commit_log(i)
-                            self.__last_applied = i
-                    await LeaderTask.run(self)
-
     async def _initialize_persistent_state(self) -> None:
         """Persistent state on all servers
         (Updated on stable storage before responding to RPCs)
@@ -148,6 +130,24 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         """
         self.__next_index: Dict[RaftId, int] = {}
         self.__match_index: Dict[RaftId, int] = {}
+
+    async def main(self) -> None:
+        while True:
+            match self.__state:
+                case RaftState.FOLLOWER:
+                    await FollowerTask.run(self)
+                case RaftState.CANDIDATE:
+                    while self.__state is RaftState.CANDIDATE:
+                        await CandidateTask.run(self)
+                        await asyncio.sleep(self.__election_timeout)
+                case RaftState.LEADER:
+                    count = await self.__log.count()
+                    for i in range(1, count + 1):
+                        if entry := await self.__log.get(i):
+                            self.__fsm.apply(command=entry.command)
+                            await self.commit_log(i)
+                            self.__last_applied = i
+                    await LeaderTask.run(self)
 
     async def _restart_timeout(self) -> None:
         self.__elapsed_time: float = 0.0
@@ -278,7 +278,8 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         await self.__log.append(entries)
         # 5. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
         if leader_commit > self.__commit_index:
-            self.__commit_index = min(leader_commit, entries[-1].index)
+            *_, last_new_entry = entries
+            self.__commit_index = min(leader_commit, last_new_entry.index)
         return AppendEntriesResponse(term=self.current_term, success=True)
 
     async def on_request_vote(
