@@ -5,7 +5,7 @@ from typing import Iterable, Optional, Tuple
 import grpc
 
 from raft.protos import raft_pb2, raft_pb2_grpc
-from raft.types import RaftId
+from raft.types import AppendEntriesResponse, RaftId
 
 
 class AbstractRaftPeer(abc.ABC):
@@ -20,7 +20,7 @@ class AbstractRaftPeer(abc.ABC):
         prev_log_term: int,
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> AppendEntriesResponse:
         """Invoked by leader to replicate log entries; also used as heartbeat.
 
         Arguments
@@ -92,36 +92,7 @@ class GrpcRaftPeer(AbstractRaftPeer):
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
         timeout: float = 5.0,
-    ) -> Tuple[int, bool]:
-        try:
-            term, success = await asyncio.wait_for(
-                self._append_entries(
-                    to=to,
-                    term=term,
-                    leader_id=leader_id,
-                    prev_log_index=prev_log_index,
-                    prev_log_term=prev_log_term,
-                    entries=entries,
-                    leader_commit=leader_commit,
-                ),
-                timeout=timeout,
-            )
-            return term, success
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
-        return term, False
-
-    async def _append_entries(
-        self,
-        *,
-        to: str,
-        term: int,
-        leader_id: RaftId,
-        prev_log_index: int,
-        prev_log_term: int,
-        entries: Iterable[raft_pb2.Log],
-        leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> AppendEntriesResponse:
         request = raft_pb2.AppendEntriesRequest(
             term=term,
             leader_id=leader_id,
@@ -133,11 +104,15 @@ class GrpcRaftPeer(AbstractRaftPeer):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await stub.AppendEntries(request)
-                return response.term, response.success
-            except grpc.aio.AioRpcError:
+                response = await asyncio.wait_for(
+                    stub.AppendEntries(request), timeout=timeout
+                )
+                return AppendEntriesResponse(
+                    term=response.term, success=response.success
+                )
+            except (grpc.aio.AioRpcError, asyncio.TimeoutError):
                 pass
-            return term, False
+        return AppendEntriesResponse(term=term, success=False)
 
     async def request_vote(
         self,
@@ -149,31 +124,6 @@ class GrpcRaftPeer(AbstractRaftPeer):
         last_log_term: int,
         timeout: float = 5.0,
     ) -> Tuple[int, bool]:
-        try:
-            term, vote_granted = await asyncio.wait_for(
-                self._request_vote(
-                    to=to,
-                    term=term,
-                    candidate_id=candidate_id,
-                    last_log_index=last_log_index,
-                    last_log_term=last_log_term,
-                ),
-                timeout=timeout,
-            )
-            return term, vote_granted
-        except asyncio.TimeoutError:
-            pass
-        return term, False
-
-    async def _request_vote(
-        self,
-        *,
-        to: str,
-        term: int,
-        candidate_id: RaftId,
-        last_log_index: int,
-        last_log_term: int,
-    ) -> Tuple[int, bool]:
         request = raft_pb2.RequestVoteRequest(
             term=term,
             candidate_id=candidate_id,
@@ -183,11 +133,13 @@ class GrpcRaftPeer(AbstractRaftPeer):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await stub.RequestVote(request)
+                response = await asyncio.wait_for(
+                    stub.RequestVote(request), timeout=timeout
+                )
                 return response.term, response.vote_granted
-            except grpc.aio.AioRpcError:
+            except (grpc.aio.AioRpcError, asyncio.TimeoutError):
                 pass
-            return term, False
+        return term, False
 
     def __create_channel(self, target: str) -> grpc.aio.Channel:
         if credentials := self.__credentials:

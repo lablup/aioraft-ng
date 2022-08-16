@@ -5,7 +5,6 @@ import grpc
 
 from raft.aio.protocols import AbstractRaftClusterProtocol, AbstractRaftProtocol
 from raft.protos import raft_pb2, raft_pb2_grpc
-from raft.types import RaftClusterStatus
 
 
 class AbstractRaftServer(abc.ABC):
@@ -75,7 +74,7 @@ class GrpcRaftServer(
     ) -> raft_pb2.AppendEntriesResponse:
         if (protocol := self.__raft_protocol) is None:
             return raft_pb2.AppendEntriesResponse(term=request.term, success=False)
-        term, success = await protocol.on_append_entries(
+        response = await protocol.on_append_entries(
             term=request.term,
             leader_id=request.leader_id,
             prev_log_index=request.prev_log_index,
@@ -83,7 +82,9 @@ class GrpcRaftServer(
             entries=request.entries,
             leader_commit=request.leader_commit,
         )
-        return raft_pb2.AppendEntriesResponse(term=term, success=success)
+        return raft_pb2.AppendEntriesResponse(
+            term=response.term, success=response.success
+        )
 
     async def RequestVote(
         self,

@@ -52,9 +52,12 @@ async def main():
                     )
                 except grpc.aio.AioRpcError:
                     leader = random.choice(configuration)
+                    continue
                 match response.status:
                     case raft_pb2.RaftClusterStatus.OK:
-                        print(f"RaftClusterStatus.OK: {response.response}")
+                        print(
+                            f"RaftClusterStatus.OK: {response.response} (leader={leader})"
+                        )
                         success = True
                     case raft_pb2.RaftClusterStatus.NOT_LEADER:
                         print(f"RaftClusterStatus.NOT_LEADER: {response.leader_hint}")

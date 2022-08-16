@@ -75,6 +75,15 @@ class Log:
 
 
 @dataclass
+class AppendEntriesResponse:
+    term: int
+    success: bool
+
+    def dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class ClientRequestResponse:
     status: RaftClusterStatus
     response: Optional[str] = None

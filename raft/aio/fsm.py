@@ -12,7 +12,7 @@ class RespFSM:
         self._clients: List[str] = []
         # self._sessions: List[str] = []
 
-    def apply(self, client_id: str, sequence_num: int, command: str) -> Optional[str]:
+    def apply(self, command: str) -> Optional[str]:
         match command.split():
             case ["DECRBY", key, value]:
                 x = self._dict.get(key, AtomicInteger(0)).decrease(int(value))

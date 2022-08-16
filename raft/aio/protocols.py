@@ -3,6 +3,7 @@ from typing import Iterable, Tuple
 
 from raft.protos import raft_pb2
 from raft.types import (
+    AppendEntriesResponse,
     ClientQueryResponse,
     ClientRequestResponse,
     RaftId,
@@ -21,7 +22,7 @@ class AbstractRaftProtocol(abc.ABC):
         prev_log_term: int,
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> AppendEntriesResponse:
         """Receiver implementation:
         1. Reply false if term < currentTerm
         2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
