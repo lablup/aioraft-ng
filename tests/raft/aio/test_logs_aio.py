@@ -20,16 +20,24 @@ async def test_memory_replicated_log(
     count = await memory_replicated_log.count()
     assert count == len(entries)
 
-    random_index = random.randint(1, count)
+    random_index = random.randint(1, n)
     row = await memory_replicated_log.get(random_index)
     assert row is not None
     assert row.index == random_index
+
+    row = await memory_replicated_log.precede(1)
+    assert row is None
+
+    random_index = random.randint(2, n)
+    row = await memory_replicated_log.precede(random_index)
+    assert row is not None
+    assert row.index == random_index - 1
 
     row = await memory_replicated_log.last()
     assert row is not None
     assert row.index == n
 
-    random_commit_index = random.randint(1, count)
+    random_commit_index = random.randint(1, n)
     await memory_replicated_log.commit(index=random_commit_index)
     committed_row = await memory_replicated_log.last(committed=True)
     assert committed_row is not None
@@ -87,16 +95,24 @@ async def test_sqlite_replicated_log_aio(
     count = await sqlite_replicated_log.count()
     assert count == len(entries)
 
-    random_index = random.randint(1, count)
+    random_index = random.randint(1, n)
     row = await sqlite_replicated_log.get(random_index)
     assert row is not None
     assert row.index == random_index
+
+    row = await sqlite_replicated_log.precede(1)
+    assert row is None
+
+    random_index = random.randint(2, n)
+    row = await sqlite_replicated_log.precede(random_index)
+    assert row is not None
+    assert row.index == random_index - 1
 
     row = await sqlite_replicated_log.last()
     assert row is not None
     assert row.index == n
 
-    random_commit_index = random.randint(1, count)
+    random_commit_index = random.randint(1, n)
     await sqlite_replicated_log.commit(index=random_commit_index)
     committed_row = await sqlite_replicated_log.last(committed=True)
     assert committed_row is not None

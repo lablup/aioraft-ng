@@ -24,6 +24,10 @@ class AbstractReplicatedLog(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def precede(self, index: int) -> Optional[raft_pb2.Log]:
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
         raise NotImplementedError()
 
@@ -65,6 +69,13 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
             for entry in self._logs:
                 if entry.index == index:
                     return entry.proto()
+        return None
+
+    async def precede(self, index: int) -> Optional[raft_pb2.Log]:
+        with self._lock:
+            for i, entry in enumerate(self._logs):
+                if entry.index == index:
+                    return self._logs[i-1].proto() if i > 0 else None
         return None
 
     async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
@@ -150,6 +161,17 @@ class SqliteReplicatedLog(aobject, AbstractReplicatedLog):
             cursor = await conn.cursor()
             cursor = await cursor.execute(
                 f"SELECT * FROM {self._table} WHERE idx = :index", {"index": index}
+            )
+            if row := await cursor.fetchone():
+                return raft_pb2.Log(index=row[0], term=row[1], command=row[2])
+            return None
+
+    async def precede(self, index: int) -> Optional[raft_pb2.Log]:
+        async with aiosqlite.connect(self._database) as conn:
+            cursor = await conn.cursor()
+            cursor = await cursor.execute(
+                f"SELECT * FROM {self._table} WHERE idx < :index ORDER BY idx DESC LIMIT 1",
+                {"index": index},
             )
             if row := await cursor.fetchone():
                 return raft_pb2.Log(index=row[0], term=row[1], command=row[2])
