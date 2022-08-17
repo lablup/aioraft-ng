@@ -367,7 +367,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
     async def on_client_query(self, *, query: str) -> ClientQueryResponse:
         # 1. Reply NOT_LEADER if not leader, providing hint when available
         if not self.has_leadership():
-            return ClientQueryResponse(status=RaftClusterStatus.NOT_LEADER, leader_hint=self.__leader_id)
+            return ClientQueryResponse(
+                status=RaftClusterStatus.NOT_LEADER, leader_hint=self.__leader_id
+            )
         # 2. Wait until last committed entry is from this leader's term
         while True:
             if last_committed_entry := await self.__log.last(committed=True):

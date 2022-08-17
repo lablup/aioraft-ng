@@ -141,7 +141,7 @@ class GrpcRaftServer(
             )
         response = await protocol.on_client_query(query=request.query)
         return raft_pb2.ClientQueryResponse(
-            status=response.status.value,   # type: ignore
+            status=response.status.value,  # type: ignore
             response=response.response,
             leader_hint=response.leader_hint,
         )
