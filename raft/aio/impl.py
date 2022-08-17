@@ -144,7 +144,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
                     count = await self.__log.count()
                     for i in range(1, count + 1):
                         if entry := await self.__log.get(i):
-                            self.__fsm.apply(command=entry.command)
+                            await self.__fsm.apply(command=entry.command)
                             await self.commit_log(i)
                             self.__last_applied = i
                     await LeaderTask.run(self)
@@ -319,45 +319,25 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         entries: Iterable[raft_pb2.Log] = [
             raft_pb2.Log(index=index, term=self.current_term, command=command)
         ]
-        logging.info(f"[on_client_request] entries={entries}")
         prev_log = await self.__log.last()
         await self.__log.append(entries)
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} Appended! [1/5]"
-        )
         await self.replicate(entries=entries, prev_log=prev_log)
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} Replicated! [2/5]"
-        )
         _ = await self.commit_log(index=index)
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} Committed! [3/5]"
-        )
         # 3. Reply SESSION_EXPIRED if no record of clientId or if response for client's sequenceNum already discarded
         if client_id is None:
             return ClientRequestResponse(status=RaftClusterStatus.SESSION_EXPIRED)
         # 4. If sequenceNum already processed from client, reply OK with stored response
-        if (response_cache := self._response_cache.get(client_id)) and (
-            response_cache[0] == sequence_num
-        ):
-            return ClientRequestResponse(
-                status=RaftClusterStatus.OK, response=response_cache[1]
-            )
+        if response_cache := self._response_cache.get(client_id):
+            if response_cache[0] == sequence_num:
+                return ClientRequestResponse(
+                    status=RaftClusterStatus.OK, response=response_cache[1]
+                )
         # 5. Apply command in log order
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} Apply... [4/5]"
-        )
-        output = self.__fsm.apply(command=command)
+        output = await self.__fsm.apply(command=command)
         self.__last_applied = index
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} Applied! [5/5]"
-        )
         # 6. Save state machine output with sequenceNum for client, discard any prior response for client
         self._response_cache[client_id] = (sequence_num, output)
         # 7. Reply OK with state machine output
-        logging.info(
-            f"[on_client_request] client_id={client_id[:4]} sequence={sequence_num} ... OK!"
-        )
         return ClientRequestResponse(
             status=RaftClusterStatus.OK, response=output, leader_hint=self.id
         )
@@ -385,28 +365,27 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         return RegisterClientResponse(status=RaftClusterStatus.OK)
 
     async def on_client_query(self, *, query: str) -> ClientQueryResponse:
-        """
         # 1. Reply NOT_LEADER if not leader, providing hint when available
         if not self.has_leadership():
-            return ClientQueryResponse(
-                status=RaftClusterStatus.NOT_LEADER, leader_hint=self.__leader_id
-            )
+            return ClientQueryResponse(status=RaftClusterStatus.NOT_LEADER, leader_hint=self.__leader_id)
         # 2. Wait until last committed entry is from this leader's term
-        # TODO: skip
+        while True:
+            if last_committed_entry := await self.__log.last(committed=True):
+                if last_committed_entry.term == self.current_term:
+                    break
+            await asyncio.sleep(1.0)
         # 3. Save commitIndex as local variable readIndex (used below)
         read_index = self.__commit_index
         # 4. Send new round of heartbeats, and wait for reply from majority of servers
         while not await self.send_heartbeat():
-            pass
+            await asyncio.sleep(self.__heartbeat_timeout / 2)
         # 5. Wait for state machine to advance at least to the readIndex log entry
-        ...
+        while self.__last_applied < read_index:
+            await asyncio.sleep(1.0)
         # 6. Process query
-        index = await self.__log.count() + 1
+        output = await self.__fsm.query(query)
         # 7. Reply OK with state machine output
-        output = await self._commit_log(index=index)
         return ClientQueryResponse(status=RaftClusterStatus.OK, response=output)
-        """
-        return ClientQueryResponse(status=RaftClusterStatus.OK, response=None)
 
     @property
     def id(self) -> RaftId:

@@ -12,7 +12,7 @@ class RespFSM:
         self._clients: List[str] = []
         # self._sessions: List[str] = []
 
-    def apply(self, command: str) -> Optional[str]:
+    async def apply(self, command: str) -> Optional[str]:
         match command.split():
             case ["DECRBY", key, value]:
                 x = self._dict.get(key, AtomicInteger(0)).decrease(int(value))
@@ -30,9 +30,6 @@ class RespFSM:
                 x = self._dict.get(key, AtomicInteger(0)).increase()
                 self._dict[key] = x
                 return str(x.value)
-            case ["GET", key]:
-                if atomic_value := self._dict.get(key):
-                    return str(atomic_value.value)
             case ["SET", key, value]:
                 try:
                     x = AtomicInteger(int(value))
@@ -45,4 +42,11 @@ class RespFSM:
             if client_id not in self._clients:
                 self._clients.append(client_id)
         """
+        return None
+
+    async def query(self, query: str) -> Optional[str]:
+        match query.split():
+            case ["GET", key]:
+                if atomic_value := self._dict.get(key):
+                    return str(atomic_value.value)
         return None

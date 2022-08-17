@@ -9,19 +9,6 @@ import tomli
 from raft.aio.clients import GrpcRaftClient
 from raft.protos import raft_pb2
 
-"""
-async def send_request(peer: str, id: str, command: str) -> Tuple[bool, Optional[str]]:
-    async with grpc.aio.insecure_channel(peer) as channel:
-        stub = raft_pb2_grpc.CommandServiceStub(channel)
-        request = raft_pb2.CommandRequest(id=id, command=command)
-        try:
-            response = await stub.Command(request)
-            print(f"({peer}) response(success={response.success}, redirect={response.redirect})")
-            return response.success, response.redirect
-        except grpc.aio.AioRpcError as e:
-            raise e
-"""
-
 
 def load_config():
     path = Path(__file__).parent.parent / "config.toml"
@@ -44,12 +31,15 @@ async def main():
             sequence_num += 1
             while not success:
                 try:
-                    response = await client.client_request(
-                        to=leader,
-                        client_id=client_id,
-                        sequence_num=sequence_num,
-                        command=command,
-                    )
+                    if command.startswith("GET"):
+                        response = await client.client_query(to=leader, query=command)
+                    else:
+                        response = await client.client_request(
+                            to=leader,
+                            client_id=client_id,
+                            sequence_num=sequence_num,
+                            command=command,
+                        )
                 except grpc.aio.AioRpcError:
                     leader = random.choice(configuration)
                     continue

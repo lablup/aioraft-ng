@@ -135,4 +135,13 @@ class GrpcRaftServer(
     async def ClientQuery(
         self, request: raft_pb2.ClientQueryRequest, context: grpc.aio.ServicerContext
     ) -> raft_pb2.ClientQueryResponse:
-        pass
+        if (protocol := self.__raft_cluster_protocol) is None:
+            return raft_pb2.ClientQueryResponse(
+                status=raft_pb2.RaftClusterStatus.NOT_LEADER, leader_hint=None  # type: ignore
+            )
+        response = await protocol.on_client_query(query=request.query)
+        return raft_pb2.ClientQueryResponse(
+            status=response.status.value,   # type: ignore
+            response=response.response,
+            leader_hint=response.leader_hint,
+        )
