@@ -75,7 +75,7 @@ class MemoryReplicatedLog(AbstractReplicatedLog):
         with self._lock:
             for i, entry in enumerate(self._logs):
                 if entry.index == index:
-                    return self._logs[i-1].proto() if i > 0 else None
+                    return self._logs[i - 1].proto() if i > 0 else None
         return None
 
     async def last(self, committed: bool = False) -> Optional[raft_pb2.Log]:
