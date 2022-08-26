@@ -75,7 +75,6 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
 
         self.__leader_id: Optional[RaftId] = None
 
-        self.__election_timeout: Final[float] = randrangef(0.15, 0.3)
         self.__heartbeat_timeout: Final[float] = 0.1
 
         self.__fsm = RespFSM()
@@ -89,6 +88,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
 
         await self.__change_state(RaftState.FOLLOWER)
         await self._restart_timeout()
+        await self._reset_election_timeout()
 
     async def _initialize_persistent_state(self) -> None:
         """Persistent state on all servers
@@ -157,6 +157,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
 
     async def _restart_timeout(self) -> None:
         self.__elapsed_time: float = 0.0
+
+    async def _reset_election_timeout(self):
+        self.__election_timeout: float = randrangef(0.15, 0.3)
 
     async def _wait_for_election_timeout(self, interval: float = 1.0 / 30) -> None:
         while self.__elapsed_time < self.__election_timeout:
@@ -492,6 +495,7 @@ class FollowerTask(RaftTask):
 class CandidateTask(RaftTask):
     @staticmethod
     async def run(raft: Raft):
+        await raft._reset_election_timeout()
         await raft._start_election()
         await raft._initialize_volatile_state()
         if raft.has_leadership():
