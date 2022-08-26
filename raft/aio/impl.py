@@ -18,6 +18,7 @@ from raft.types import (
     RaftId,
     RaftState,
     RegisterClientResponse,
+    RequestVoteResponse,
     aobject,
 )
 from raft.utils import AtomicInteger, randrangef
@@ -103,7 +104,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         """
         self.__current_term: AtomicInteger = AtomicInteger(0)
         self.__voted_for: Optional[RaftId] = None
-        self.__log: AbstractReplicatedLog = MemoryReplicatedLog()
+        self.raft_log: AbstractReplicatedLog = MemoryReplicatedLog()
 
     async def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
@@ -141,12 +142,17 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
                         await CandidateTask.run(self)
                         await asyncio.sleep(self.__election_timeout)
                 case RaftState.LEADER:
-                    count = await self.__log.count()
+                    # Upon becoming leader, append `no-op` entry to log.
+                    await self.proclaim()
+                    """
+                    # FIXME: Apply and commit previous logs.
+                    count = await self.raft_log.count()
                     for i in range(1, count + 1):
-                        if entry := await self.__log.get(i):
+                        if entry := await self.raft_log.get(i):
                             await self.__fsm.apply(command=entry.command)
                             await self.commit_log(i)
                             self.__last_applied = i
+                    """
                     await LeaderTask.run(self)
 
     async def _restart_timeout(self) -> None:
@@ -175,44 +181,49 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
 
-        terms, grants = zip(
-            *await asyncio.gather(
-                *[
-                    asyncio.create_task(
-                        self.__peer.request_vote(
-                            to=server,
-                            term=current_term,
-                            candidate_id=self.id,
-                            last_log_index=0,
-                            last_log_term=0,
-                        ),
-                    )
-                    for server in self.__configuration
-                ]
-            )
+        responses = await asyncio.gather(
+            *[
+                asyncio.create_task(
+                    self.__peer.request_vote(
+                        to=server,
+                        term=current_term,
+                        candidate_id=self.id,
+                        last_log_index=0,
+                        last_log_term=0,
+                    ),
+                )
+                for server in self.__configuration
+            ]
         )
 
-        for term in terms:
-            if term > current_term:
-                await self.__synchronize_term(term)
+        for response in responses:
+            if response.term > current_term:
+                await self.__synchronize_term(response.term)
+                await self.__change_state(RaftState.FOLLOWER)
                 break
         else:
-            if sum(grants) + 1 >= self.quorum:
+            if sum([r.vote_granted for r in responses]) + 1 >= self.quorum:
                 await self.__change_state(RaftState.LEADER)
                 return True
 
         return False
 
     async def send_heartbeat(self) -> bool:
+        # TODO: entries..
         return await self.replicate(entries=())
 
-    async def replicate(
-        self, entries: Iterable[raft_pb2.Log], prev_log: Optional[raft_pb2.Log] = None
-    ) -> bool:
+    async def replicate(self, entries: Iterable[raft_pb2.Log], strict: bool = False) -> bool:
         if not self.has_leadership():
             return False
-        prev_log_index = 0 if prev_log is None else prev_log.index
-        prev_log_term = 0 if prev_log is None else prev_log.term
+
+        prev_log_index = 0
+        prev_log_term = 0
+
+        if entries:
+            if prev_log := await self.raft_log.precede(entries[0].index):
+                prev_log_index = prev_log.index
+                prev_log_term = prev_log.term
+
         responses = await asyncio.gather(
             *[
                 asyncio.create_task(
@@ -229,15 +240,35 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
                 for server in self.__configuration
             ]
         )
+        if strict:
+            return sum([r.success for r in responses]) + 1 == self.membership
         return sum([r.success for r in responses]) + 1 >= self.quorum
 
+    """
+    async def append_entries(self, to: str) -> bool:
+        pass
+
+    async def retry_append_entries(self, to: str):
+        while not await self.append_entries(to=to):
+            await asyncio.sleep(0.1)
+    """
+
     async def commit_log(self, index: int) -> bool:
-        await self.__log.commit(index=index)
+        await self.raft_log.commit(index=index)
         self.__commit_index = index
         return True
 
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
+
+    async def proclaim(self) -> None:
+        logging.info('Upon becoming leader, append "no-op".')
+        count = await self.raft_log.count()
+        no_op_entry = raft_pb2.Log(
+            index=count + 1, term=self.current_term, command=None
+        )
+        await self.raft_log.append(entries=(no_op_entry,))
+        await self.replicate(entries=(no_op_entry,))
 
     """
     AbstractRaftProtocol
@@ -256,6 +287,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         await self._restart_timeout()
         # 1. Reply false if term < currentTerm
         if term < (current_term := self.current_term):
+            logging.info(f"[on_append_entries] success=False :: term={term} current_term={self.current_term}")
             return AppendEntriesResponse(term=current_term, success=False)
         await self.__synchronize_term(term)
         # X. Return early on heartbeat
@@ -264,22 +296,25 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
             return AppendEntriesResponse(term=self.current_term, success=True)
         # 2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
         if prev_log_index > 0:
-            prev_log = await self.__log.get(index=prev_log_index)
+            prev_log = await self.raft_log.get(index=prev_log_index)
             if prev_log is None or prev_log.term != prev_log_term:
+                logging.info(f"[on_append_entries] success=False :: prev_log_index={prev_log_index} prev_log={prev_log}")
                 return AppendEntriesResponse(term=self.current_term, success=False)
         # 3. If an existing entry conflicts with a new one (same index but different terms),
         #    delete the existing entry and all that follow it
         for entry in entries:
-            log = await self.__log.get(index=entry.index)
+            log = await self.raft_log.get(index=entry.index)
             if log is not None and log.term != entry.term:
-                await self.__log.splice(entry.index)
+                await self.raft_log.splice(entry.index)
                 break
         # 4. Append any new entries not already in the log
-        await self.__log.append(entries)
+        await self.raft_log.append(entries)
         # 5. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
         if leader_commit > self.__commit_index:
             *_, last_new_entry = entries
+            # FIXME: Apply?
             self.__commit_index = min(leader_commit, last_new_entry.index)
+        logging.info("[on_append_entries] success=True")
         return AppendEntriesResponse(term=self.current_term, success=True)
 
     async def on_request_vote(
@@ -289,16 +324,29 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> RequestVoteResponse:
         await self._restart_timeout()
+        # 1. Reply false if term < currentTerm
         if term < (current_term := self.current_term):
-            return (current_term, False)
+            return RequestVoteResponse(term=current_term, vote_granted=False)
+
         await self.__synchronize_term(term)
 
-        if self.voted_for in [None, candidate_id]:
-            self.__voted_for = candidate_id
-            return (self.current_term, True)
-        return (self.current_term, False)
+        # 2. If votedFor is null or candidateId, and candidate's log is
+        #    at least as up-to-date as receiver's log, grant vote
+        if self.voted_for not in [None, candidate_id]:
+            logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: voted-for={self.voted_for[-4:]}")
+            return RequestVoteResponse(term=self.current_term, vote_granted=False)
+
+        if last_log := await self.raft_log.last():
+            if last_log_term < last_log.term or last_log_index < last_log.index:
+                logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: term({last_log_term}, {last_log.term}) index({last_log_index}, {last_log.index})")
+                return RequestVoteResponse(term=self.current_term, vote_granted=False)
+
+        self.__voted_for = candidate_id
+
+        logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=True")
+        return RequestVoteResponse(term=self.current_term, vote_granted=True)
 
     """
     AbstractRaftClusterProtocol
@@ -307,6 +355,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
     async def on_client_request(
         self, *, client_id: str, sequence_num: int, command: str
     ) -> ClientRequestResponse:
+        logging.info(f"[on_client_request] cid={client_id[:8]} seq={sequence_num} command=\"{command}\"")
         # 1. Reply NOT_LEADER if not leader, providing hint when available
         if not self.has_leadership():
             return ClientRequestResponse(
@@ -315,13 +364,12 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
                 leader_hint=self.__leader_id,
             )
         # 2. Append command to log, replicate and commit it
-        index = await self.__log.count() + 1
+        index = await self.raft_log.count() + 1
         entries: Iterable[raft_pb2.Log] = [
             raft_pb2.Log(index=index, term=self.current_term, command=command)
         ]
-        prev_log = await self.__log.last()
-        await self.__log.append(entries)
-        await self.replicate(entries=entries, prev_log=prev_log)
+        await self.raft_log.append(entries)
+        await self.replicate(entries=entries)
         _ = await self.commit_log(index=index)
         # 3. Reply SESSION_EXPIRED if no record of clientId or if response for client's sequenceNum already discarded
         if client_id is None:
@@ -353,9 +401,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
             )
         # 2. Append register command to log, replicate and commit it
         client_id = str(uuid.uuid4())
-        index = await self.__log.count() + 1
+        index = await self.raft_log.count() + 1
         entries: Iterable[raft_pb2.Log] = tuple(raft_pb2.Log(index=index, term=self.current_term, command=f"REG CLIENT {client_id}"))
-        await self.__log.append(entries)
+        await self.raft_log.append(entries)
         await self.replicate(entries=entries)
         output = await self._commit_log(index=index)
         # 3. Apply command in log order, allocating session for new client
@@ -372,7 +420,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
             )
         # 2. Wait until last committed entry is from this leader's term
         while True:
-            if last_committed_entry := await self.__log.last(committed=True):
+            if last_committed_entry := await self.raft_log.last(committed=True):
                 if last_committed_entry.term == self.current_term:
                     break
             await asyncio.sleep(1.0)

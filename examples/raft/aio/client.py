@@ -26,7 +26,7 @@ async def main():
     sequence_num = 0
 
     while True:
-        while command := input("(redis) > "):
+        while (command := input("(redis) > ")) != "exit":
             success = False
             sequence_num += 1
             while not success:

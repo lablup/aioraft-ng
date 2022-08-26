@@ -84,6 +84,15 @@ class AppendEntriesResponse:
 
 
 @dataclass
+class RequestVoteResponse:
+    term: int
+    vote_granted: bool
+
+    def dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class ClientRequestResponse:
     status: RaftClusterStatus
     response: Optional[str] = None

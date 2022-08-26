@@ -1,11 +1,11 @@
 import abc
 import asyncio
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional
 
 import grpc
 
 from raft.protos import raft_pb2, raft_pb2_grpc
-from raft.types import AppendEntriesResponse, RaftId
+from raft.types import AppendEntriesResponse, RaftId, RequestVoteResponse
 
 
 class AbstractRaftPeer(abc.ABC):
@@ -52,7 +52,7 @@ class AbstractRaftPeer(abc.ABC):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> RequestVoteResponse:
         """Invoked by candidates to gather votes.
 
         Arguments
@@ -123,7 +123,7 @@ class GrpcRaftPeer(AbstractRaftPeer):
         last_log_index: int,
         last_log_term: int,
         timeout: float = 5.0,
-    ) -> Tuple[int, bool]:
+    ) -> RequestVoteResponse:
         request = raft_pb2.RequestVoteRequest(
             term=term,
             candidate_id=candidate_id,
@@ -136,10 +136,10 @@ class GrpcRaftPeer(AbstractRaftPeer):
                 response = await asyncio.wait_for(
                     stub.RequestVote(request), timeout=timeout
                 )
-                return response.term, response.vote_granted
+                return RequestVoteResponse(term=response.term, vote_granted=response.vote_granted)
             except (grpc.aio.AioRpcError, asyncio.TimeoutError):
                 pass
-        return term, False
+        return RequestVoteResponse(term=term, vote_granted=False)
 
     def __create_channel(self, target: str) -> grpc.aio.Channel:
         if credentials := self.__credentials:

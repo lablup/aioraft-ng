@@ -1,5 +1,5 @@
 import abc
-from typing import Iterable, Tuple
+from typing import Iterable
 
 from raft.protos import raft_pb2
 from raft.types import (
@@ -8,6 +8,7 @@ from raft.types import (
     ClientRequestResponse,
     RaftId,
     RegisterClientResponse,
+    RequestVoteResponse,
 )
 
 
@@ -58,11 +59,11 @@ class AbstractRaftProtocol(abc.ABC):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> RequestVoteResponse:
         """Receiver implementation:
         1. Reply false if term < currentTerm
         2. If votedFor is null or candidateId, and candidate's log is
-           at lease as up-to-date as receiver's log, grant vote
+           at least as up-to-date as receiver's log, grant vote
 
         Arguments
         ---------

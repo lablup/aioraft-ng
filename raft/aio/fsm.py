@@ -10,9 +10,10 @@ class RespFSM:
     def __init__(self):
         self._dict: Dict[str, AtomicInteger] = {}
         self._clients: List[str] = []
-        # self._sessions: List[str] = []
 
-    async def apply(self, command: str) -> Optional[str]:
+    async def apply(self, command: Optional[str]) -> Optional[str]:
+        if command is None:
+            return None
         match command.split():
             case ["DECRBY", key, value]:
                 x = self._dict.get(key, AtomicInteger(0)).decrease(int(value))
