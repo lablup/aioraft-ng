@@ -212,7 +212,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         # TODO: entries..
         return await self.replicate(entries=())
 
-    async def replicate(self, entries: Iterable[raft_pb2.Log], strict: bool = False) -> bool:
+    async def replicate(
+        self, entries: Iterable[raft_pb2.Log], strict: bool = False
+    ) -> bool:
         if not self.has_leadership():
             return False
 
@@ -287,7 +289,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         await self._restart_timeout()
         # 1. Reply false if term < currentTerm
         if term < (current_term := self.current_term):
-            logging.info(f"[on_append_entries] success=False :: term={term} current_term={self.current_term}")
+            logging.info(
+                f"[on_append_entries] success=False :: term={term} current_term={self.current_term}"
+            )
             return AppendEntriesResponse(term=current_term, success=False)
         await self.__synchronize_term(term)
         # X. Return early on heartbeat
@@ -298,7 +302,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         if prev_log_index > 0:
             prev_log = await self.raft_log.get(index=prev_log_index)
             if prev_log is None or prev_log.term != prev_log_term:
-                logging.info(f"[on_append_entries] success=False :: prev_log_index={prev_log_index} prev_log={prev_log}")
+                logging.info(
+                    f"[on_append_entries] success=False :: prev_log_index={prev_log_index} prev_log={prev_log}"
+                )
                 return AppendEntriesResponse(term=self.current_term, success=False)
         # 3. If an existing entry conflicts with a new one (same index but different terms),
         #    delete the existing entry and all that follow it
@@ -335,17 +341,23 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         # 2. If votedFor is null or candidateId, and candidate's log is
         #    at least as up-to-date as receiver's log, grant vote
         if self.voted_for not in [None, candidate_id]:
-            logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: voted-for={self.voted_for}")
+            logging.info(
+                f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: voted-for={self.voted_for}"
+            )
             return RequestVoteResponse(term=self.current_term, vote_granted=False)
 
         if last_log := await self.raft_log.last():
             if last_log_term < last_log.term or last_log_index < last_log.index:
-                logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: term({last_log_term}, {last_log.term}) index({last_log_index}, {last_log.index})")
+                logging.info(
+                    f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: term({last_log_term}, {last_log.term}) index({last_log_index}, {last_log.index})"
+                )
                 return RequestVoteResponse(term=self.current_term, vote_granted=False)
 
         self.__voted_for = candidate_id
 
-        logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=True")
+        logging.info(
+            f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=True"
+        )
         return RequestVoteResponse(term=self.current_term, vote_granted=True)
 
     """
@@ -355,7 +367,9 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
     async def on_client_request(
         self, *, client_id: str, sequence_num: int, command: str
     ) -> ClientRequestResponse:
-        logging.info(f"[on_client_request] cid={client_id[:8]} seq={sequence_num} command=\"{command}\"")
+        logging.info(
+            f'[on_client_request] cid={client_id[:8]} seq={sequence_num} command="{command}"'
+        )
         # 1. Reply NOT_LEADER if not leader, providing hint when available
         if not self.has_leadership():
             return ClientRequestResponse(

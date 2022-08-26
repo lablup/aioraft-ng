@@ -99,7 +99,9 @@ class GrpcRaftServer(
             last_log_index=request.last_log_index,
             last_log_term=request.last_log_term,
         )
-        return raft_pb2.RequestVoteResponse(term=response.term, vote_granted=response.vote_granted)
+        return raft_pb2.RequestVoteResponse(
+            term=response.term, vote_granted=response.vote_granted
+        )
 
     """
     raft_pb2_grpc.RaftClusterServiceServicer

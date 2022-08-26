@@ -136,7 +136,9 @@ class GrpcRaftPeer(AbstractRaftPeer):
                 response = await asyncio.wait_for(
                     stub.RequestVote(request), timeout=timeout
                 )
-                return RequestVoteResponse(term=response.term, vote_granted=response.vote_granted)
+                return RequestVoteResponse(
+                    term=response.term, vote_granted=response.vote_granted
+                )
             except (grpc.aio.AioRpcError, asyncio.TimeoutError):
                 pass
         return RequestVoteResponse(term=term, vote_granted=False)
