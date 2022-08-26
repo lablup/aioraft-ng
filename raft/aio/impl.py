@@ -219,7 +219,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         prev_log_index = 0
         prev_log_term = 0
 
-        if entries:
+        if entries := tuple(entries):
             if prev_log := await self.raft_log.precede(entries[0].index):
                 prev_log_index = prev_log.index
                 prev_log_term = prev_log.term
@@ -335,7 +335,7 @@ class Raft(aobject, AbstractRaftProtocol, AbstractRaftClusterProtocol):
         # 2. If votedFor is null or candidateId, and candidate's log is
         #    at least as up-to-date as receiver's log, grant vote
         if self.voted_for not in [None, candidate_id]:
-            logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: voted-for={self.voted_for[-4:]}")
+            logging.info(f"\n[on_request_vote] term={term} id={candidate_id[-4:]} vote=False (reason: voted-for={self.voted_for}")
             return RequestVoteResponse(term=self.current_term, vote_granted=False)
 
         if last_log := await self.raft_log.last():
