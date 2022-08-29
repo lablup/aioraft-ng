@@ -62,7 +62,9 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
-        self.__on_state_changed: Optional[Callable[[RaftState], Awaitable]] = on_state_changed
+        self.__on_state_changed: Optional[
+            Callable[[RaftState], Awaitable]
+        ] = on_state_changed
 
         self.__heartbeat_timeout: Final[float] = 0.1
 
