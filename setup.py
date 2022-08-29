@@ -23,13 +23,13 @@ dev_requires = get_requirements("dev")
 
 
 setup(
-    name="aioraft",
+    name="aioraft-ng",
     version=VERSION,
     description=description,
     author="Lablup Inc.",
     maintainer="rapsealk",
     maintainer_email="jskang@lablup.com",
-    url="https://github.com/lablup/aioraft",
+    url="https://github.com/lablup/aioraft-ng",
     license="Apache License 2.0",
     package_dir={"aioraft": "aioraft"},
     package_data={"": ["VERSION"]},
