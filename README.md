@@ -2,7 +2,7 @@
 ![ci-lint](https://github.com/lablup/raft-py/workflows/lint/badge.svg)
 ![ci-typecheck](https://github.com/lablup/raft-py/workflows/typecheck/badge.svg)
 ![ci-unittest](https://github.com/lablup/raft-py/workflows/unittest/badge.svg)
-* Unofficial implementation of `Raft` consensus algorithm written in asyncio-based Python.
+* Unofficial implementation of `Raft` consensus algorithm written in asyncio-based Python 3.
 
 ## About
 * Raft tolerates up to $$ { (N-1) \over 2 } $$ failures.

@@ -4,9 +4,9 @@ from setuptools import setup
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
 VERSION = "0.1.0"
-long_description = """
-An implementation of `Raft` consensus algorithm written in Python 3.
-"""
+description = (
+    "An implementation of `Raft` consensus algorithm written in asyncio-based Python 3."
+)
 
 
 def get_requirements(env: str = None):
@@ -24,8 +24,12 @@ dev_requires = get_requirements("dev")
 setup(
     name="raft",
     version=VERSION,
-    long_description=long_description,
-    author="rapsealk",
+    description=description,
+    author="Lablup Inc.",
+    maintainer="rapsealk",
+    maintainer_email="jskang@lablup.com",
+    url="https://github.com/lablup/raft-py",
+    license="Apache-2.0",
     package_dir={"raft": "raft"},
     python_requires=">=3.10",
     install_requires=install_requires,
