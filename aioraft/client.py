@@ -4,8 +4,8 @@ from typing import Iterable, Optional, Tuple
 
 import grpc
 
-from raft.protos import raft_pb2, raft_pb2_grpc
-from raft.types import RaftId
+from aioraft.protos import raft_pb2, raft_pb2_grpc
+from aioraft.types import RaftId
 
 
 class AbstractRaftClient(abc.ABC):

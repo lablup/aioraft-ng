@@ -1,8 +1,8 @@
 import abc
 from typing import Iterable, Tuple
 
-from raft.protos import raft_pb2
-from raft.types import RaftId
+from aioraft.protos import raft_pb2
+from aioraft.types import RaftId
 
 
 class AbstractRaftProtocol(abc.ABC):

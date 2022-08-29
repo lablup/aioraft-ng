@@ -22,15 +22,15 @@ dev_requires = get_requirements("dev")
 
 
 setup(
-    name="raft",
+    name="aioraft",
     version=VERSION,
     description=description,
     author="Lablup Inc.",
     maintainer="rapsealk",
     maintainer_email="jskang@lablup.com",
-    url="https://github.com/lablup/raft-py",
+    url="https://github.com/lablup/aioraft",
     license="Apache-2.0",
-    package_dir={"raft": "raft"},
+    package_dir={"aioraft": "aioraft"},
     python_requires=">=3.10",
     install_requires=install_requires,
     extras_require={"dev": dev_requires},

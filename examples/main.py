@@ -6,17 +6,17 @@ from typing import Coroutine, List
 
 import tomli
 
-from raft.aio import Raft
-from raft.aio.client import GrpcRaftClient
-from raft.aio.server import GrpcRaftServer
-from raft.types import RaftState
-from raft.utils import build_loopback_ip
+from aioraft import Raft
+from aioraft.client import GrpcRaftClient
+from aioraft.server import GrpcRaftServer
+from aioraft.types import RaftState
+from aioraft.utils import build_loopback_ip
 
 _cleanup_coroutines: List[Coroutine] = []
 
 
 def load_config():
-    path = Path(__file__).parent.parent / "config.toml"
+    path = Path(__file__).parent / "config.toml"
     return tomli.loads(path.read_text())
 
 

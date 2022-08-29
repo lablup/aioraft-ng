@@ -3,8 +3,8 @@ from typing import Coroutine, List, Optional
 
 import grpc
 
-from raft.aio.protocol import AbstractRaftProtocol
-from raft.protos import raft_pb2, raft_pb2_grpc
+from aioraft.protocol import AbstractRaftProtocol
+from aioraft.protos import raft_pb2, raft_pb2_grpc
 
 
 class AbstractRaftServer(abc.ABC):
