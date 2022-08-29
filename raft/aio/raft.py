@@ -1,8 +1,9 @@
 import asyncio
+import inspect
 import logging
 import math
 from datetime import datetime
-from typing import Dict, Final, Iterable, Optional, Set, Tuple
+from typing import Awaitable, Callable, Dict, Final, Iterable, Optional, Set, Tuple
 
 from raft.aio.client import AbstractRaftClient
 from raft.aio.protocol import AbstractRaftProtocol
@@ -54,12 +55,14 @@ class Raft(aobject, AbstractRaftProtocol):
         server: AbstractRaftServer,
         client: AbstractRaftClient,
         configuration: Iterable[RaftId],
+        on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
         self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
+        self.__on_state_changed: Optional[Callable[[RaftState], Awaitable]] = on_state_changed
 
         self.__heartbeat_timeout: Final[float] = 0.1
 
@@ -158,6 +161,11 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def __change_state(self, next_state: RaftState) -> None:
         self.__state: RaftState = next_state
+        if callback := self.__on_state_changed:
+            if inspect.iscoroutinefunction(callback):
+                await callback(next_state)
+            elif inspect.isfunction(callback):
+                callback(next_state)
 
     async def _start_election(self) -> None:
         self.__current_term.increase()

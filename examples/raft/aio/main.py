@@ -9,6 +9,7 @@ import tomli
 from raft.aio import Raft
 from raft.aio.client import GrpcRaftClient
 from raft.aio.server import GrpcRaftServer
+from raft.types import RaftState
 from raft.utils import build_loopback_ip
 
 _cleanup_coroutines: List[Coroutine] = []
@@ -36,9 +37,18 @@ async def _main():
         if not server.endswith(str(args.port))
     )
 
+    async def _on_state_changed(next_state: RaftState):
+        print(f"[_on_state_changed] next_state: {next_state}")
+
     server = GrpcRaftServer()
     client = GrpcRaftClient()
-    raft = await Raft.new(public_id, server=server, client=client, configuration=configuration)
+    raft = await Raft.new(
+        public_id,
+        server=server,
+        client=client,
+        configuration=configuration,
+        on_state_changed=_on_state_changed,
+    )
 
     done, pending = await asyncio.wait(
         {
