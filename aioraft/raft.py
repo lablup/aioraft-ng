@@ -3,6 +3,7 @@ import inspect
 import logging
 import math
 from datetime import datetime
+from threading import Lock
 from typing import Awaitable, Callable, Dict, Final, Iterable, Optional, Set, Tuple
 
 from aioraft.client import AbstractRaftClient
@@ -67,6 +68,8 @@ class Raft(aobject, AbstractRaftProtocol):
         ] = on_state_changed
 
         self.__heartbeat_timeout: Final[float] = 0.1
+
+        self.__vote_lock = Lock()
 
         server.bind(self)
 
@@ -159,7 +162,8 @@ class Raft(aobject, AbstractRaftProtocol):
         if term > self.current_term:
             self.__current_term.set(term)
             await self.__change_state(RaftState.FOLLOWER)
-            self.__voted_for = None
+            with self.__vote_lock:
+                self.__voted_for = None
 
     async def __change_state(self, next_state: RaftState) -> None:
         self.__state: RaftState = next_state
@@ -171,7 +175,8 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def _start_election(self) -> None:
         self.__current_term.increase()
-        self.__voted_for = self.id
+        with self.__vote_lock:
+            self.__voted_for = self.id
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
@@ -259,9 +264,10 @@ class Raft(aobject, AbstractRaftProtocol):
             return (current_term, False)
         await self.__synchronize_term(term)
 
-        if self.voted_for in [None, candidate_id]:
-            self.__voted_for = candidate_id
-            return (self.current_term, True)
+        with self.__vote_lock:
+            if self.voted_for in [None, candidate_id]:
+                self.__voted_for = candidate_id
+                return (self.current_term, True)
         return (self.current_term, False)
 
     @property
