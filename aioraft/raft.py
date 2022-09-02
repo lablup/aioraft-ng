@@ -172,7 +172,9 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
-        log.debug(f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}")
+        log.debug(
+            f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}"
+        )
         self.__state = next_state
         if callback := self.__on_state_changed:
             if inspect.iscoroutinefunction(callback):
@@ -269,16 +271,22 @@ class Raft(aobject, AbstractRaftProtocol):
         await self.__reset_timeout()
         with self._vote_request_lock:
             if term < (current_term := self.current_term):
-                log.debug(f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}")
+                log.debug(
+                    f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
+                )
                 return (current_term, False)
             await self.__synchronize_term(term)
 
             with self.__vote_lock:
                 if self.voted_for in [None, candidate_id]:
-                    log.debug(f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}")
+                    log.debug(
+                        f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                    )
                     self.__voted_for = candidate_id
                     return (self.current_term, True)
-            log.debug(f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}")
+            log.debug(
+                f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+            )
             return (self.current_term, False)
 
     @property
