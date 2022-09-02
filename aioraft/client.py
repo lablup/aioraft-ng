@@ -104,7 +104,9 @@ class GrpcRaftClient(AbstractRaftClient):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(stub.AppendEntries(request), timeout=timeout)
+                response = await asyncio.wait_for(
+                    stub.AppendEntries(request), timeout=timeout
+                )
                 return response.term, response.success
             except grpc.aio.AioRpcError:
                 pass
@@ -133,7 +135,9 @@ class GrpcRaftClient(AbstractRaftClient):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(stub.RequestVote(request), timeout=timeout)
+                response = await asyncio.wait_for(
+                    stub.RequestVote(request), timeout=timeout
+                )
                 return response.term, response.vote_granted
             except grpc.aio.AioRpcError:
                 pass
