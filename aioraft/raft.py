@@ -236,6 +236,10 @@ class Raft(aobject, AbstractRaftProtocol):
                 ]
             )
         )
+        for term in terms:
+            if term > self.current_term:
+                await self.__synchronize_term(term)
+                break
 
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
