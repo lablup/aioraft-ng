@@ -17,6 +17,8 @@ logging.basicConfig(level=logging.INFO)
 
 __all__ = ("Raft",)
 
+log = logging.getLogger(__name__)
+
 
 class Raft(aobject, AbstractRaftProtocol):
     """Rules for Servers
@@ -67,9 +69,11 @@ class Raft(aobject, AbstractRaftProtocol):
             Callable[[RaftState], Awaitable]
         ] = on_state_changed
 
+        self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
 
         self.__vote_lock = Lock()
+        self._vote_request_lock = Lock()
 
         server.bind(self)
 
@@ -166,7 +170,12 @@ class Raft(aobject, AbstractRaftProtocol):
                 self.__voted_for = None
 
     async def __change_state(self, next_state: RaftState) -> None:
-        self.__state: RaftState = next_state
+        if self.__state is next_state:
+            return
+        log.debug(
+            f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}"
+        )
+        self.__state = next_state
         if callback := self.__on_state_changed:
             if inspect.iscoroutinefunction(callback):
                 await callback(next_state)
@@ -227,6 +236,10 @@ class Raft(aobject, AbstractRaftProtocol):
                 ]
             )
         )
+        for term in terms:
+            if term > self.current_term:
+                await self.__synchronize_term(term)
+                break
 
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
@@ -260,15 +273,25 @@ class Raft(aobject, AbstractRaftProtocol):
         last_log_term: int,
     ) -> Tuple[int, bool]:
         await self.__reset_timeout()
-        if term < (current_term := self.current_term):
-            return (current_term, False)
-        await self.__synchronize_term(term)
+        with self._vote_request_lock:
+            if term < (current_term := self.current_term):
+                log.debug(
+                    f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
+                )
+                return (current_term, False)
+            await self.__synchronize_term(term)
 
-        with self.__vote_lock:
-            if self.voted_for in [None, candidate_id]:
-                self.__voted_for = candidate_id
-                return (self.current_term, True)
-        return (self.current_term, False)
+            with self.__vote_lock:
+                if self.voted_for in [None, candidate_id]:
+                    log.debug(
+                        f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                    )
+                    self.__voted_for = candidate_id
+                    return (self.current_term, True)
+            log.debug(
+                f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+            )
+            return (self.current_term, False)
 
     @property
     def id(self) -> RaftId:
