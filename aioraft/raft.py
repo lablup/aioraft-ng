@@ -3,7 +3,6 @@ import inspect
 import logging
 import math
 from datetime import datetime
-from threading import Lock
 from typing import Awaitable, Callable, Dict, Final, Iterable, Optional, Set, Tuple
 
 from aioraft.client import AbstractRaftClient
@@ -72,8 +71,8 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
 
-        self.__vote_lock = Lock()
-        self._vote_request_lock = Lock()
+        self.__vote_lock = asyncio.Lock()
+        self._vote_request_lock = asyncio.Lock()
 
         server.bind(self)
 
@@ -166,7 +165,7 @@ class Raft(aobject, AbstractRaftProtocol):
         if term > self.current_term:
             self.__current_term.set(term)
             await self.__change_state(RaftState.FOLLOWER)
-            with self.__vote_lock:
+            async with self.__vote_lock:
                 self.__voted_for = None
 
     async def __change_state(self, next_state: RaftState) -> None:
@@ -184,7 +183,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def _start_election(self) -> None:
         self.__current_term.increase()
-        with self.__vote_lock:
+        async with self.__vote_lock:
             self.__voted_for = self.id
 
         current_term = self.current_term
@@ -273,7 +272,7 @@ class Raft(aobject, AbstractRaftProtocol):
         last_log_term: int,
     ) -> Tuple[int, bool]:
         await self.__reset_timeout()
-        with self._vote_request_lock:
+        async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
                     f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
@@ -281,7 +280,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 return (current_term, False)
             await self.__synchronize_term(term)
 
-            with self.__vote_lock:
+            async with self.__vote_lock:
                 if self.voted_for in [None, candidate_id]:
                     log.debug(
                         f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
