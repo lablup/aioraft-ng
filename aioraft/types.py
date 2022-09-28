@@ -1,7 +1,7 @@
 import enum
-from typing import Type, TypeVar
+from typing import NewType, Type, TypeVar
 
-RaftId = str
+RaftId = NewType("RaftId", str)
 
 
 class RaftState(enum.Enum):
