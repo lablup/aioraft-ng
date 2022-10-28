@@ -2,7 +2,11 @@ import random
 
 import pytest
 
-from aioraft.logs import AbstractLogReplication, InMemoryLogReplication, SqliteLogReplication
+from aioraft.logs import (
+    AbstractLogReplication,
+    InMemoryLogReplication,
+    SqliteLogReplication,
+)
 from aioraft.protos import raft_pb2
 
 
@@ -59,19 +63,25 @@ async def _test_log_replication__splice(log: AbstractLogReplication, n: int) -> 
 
 
 @pytest.mark.asyncio
-async def test_in_memory_log_replication(in_memory_log: InMemoryLogReplication, n: int) -> None:
+async def test_in_memory_log_replication(
+    in_memory_log: InMemoryLogReplication, n: int
+) -> None:
     await _initialize_replicated_logs(in_memory_log, n=n)
     await _test_log_replication(in_memory_log, n=n)
 
 
 @pytest.mark.asyncio
-async def test_in_memory_log_replication__slice(in_memory_log: InMemoryLogReplication, n: int) -> None:
+async def test_in_memory_log_replication__slice(
+    in_memory_log: InMemoryLogReplication, n: int
+) -> None:
     await _initialize_replicated_logs(in_memory_log, n=n)
     await _test_log_replication__slice(in_memory_log, n=n)
 
 
 @pytest.mark.asyncio
-async def test_in_memory_log_replication__splice(in_memory_log: InMemoryLogReplication, n: int) -> None:
+async def test_in_memory_log_replication__splice(
+    in_memory_log: InMemoryLogReplication, n: int
+) -> None:
     await _initialize_replicated_logs(in_memory_log, n=n)
     await _test_log_replication__splice(in_memory_log, n=n)
 
@@ -86,12 +96,16 @@ async def test_sqlite_log_replication(sqlite_log: SqliteLogReplication, n: int) 
 
 
 @pytest.mark.asyncio
-async def test_sqlite_log_replication__slice(sqlite_log: SqliteLogReplication, n: int) -> None:
+async def test_sqlite_log_replication__slice(
+    sqlite_log: SqliteLogReplication, n: int
+) -> None:
     await _initialize_replicated_logs(sqlite_log, n=n)
     await _test_log_replication__slice(sqlite_log, n=n)
 
 
 @pytest.mark.asyncio
-async def test_sqlite_log_replication__splice(sqlite_log: SqliteLogReplication, n: int) -> None:
+async def test_sqlite_log_replication__splice(
+    sqlite_log: SqliteLogReplication, n: int
+) -> None:
     await _initialize_replicated_logs(sqlite_log, n=n)
     await _test_log_replication__splice(sqlite_log, n=n)
