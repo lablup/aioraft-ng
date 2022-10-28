@@ -1,3 +1,4 @@
+aiosqlite~=0.17.0
 grpcio==1.48.2
 protobuf==3.19.4
 tomli~=2.0.1

@@ -171,9 +171,7 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
-        log.debug(
-            f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}"
-        )
+        log.debug(f"[{self.__id[-5:]}] change_state(): {self.__state} -> {next_state}")
         self.__state = next_state
         if callback := self.__on_state_changed:
             if inspect.iscoroutinefunction(callback):
