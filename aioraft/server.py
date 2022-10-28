@@ -3,8 +3,9 @@ from typing import Coroutine, List, Optional
 
 import grpc
 
-from raft.aio.protocols import AbstractRaftClusterProtocol, AbstractRaftProtocol
-from raft.protos import raft_pb2, raft_pb2_grpc
+from aioraft.protocol import AbstractRaftProtocol
+from aioraft.protos import raft_pb2, raft_pb2_grpc
+from aioraft.types import RaftId
 
 
 class AbstractRaftServer(abc.ABC):
@@ -76,7 +77,7 @@ class GrpcRaftServer(
             return raft_pb2.AppendEntriesResponse(term=request.term, success=False)
         response = await protocol.on_append_entries(
             term=request.term,
-            leader_id=request.leader_id,
+            leader_id=RaftId(request.leader_id),
             prev_log_index=request.prev_log_index,
             prev_log_term=request.prev_log_term,
             entries=request.entries,
@@ -95,7 +96,7 @@ class GrpcRaftServer(
             return raft_pb2.RequestVoteResponse(term=request.term, vote_granted=False)
         response = await protocol.on_request_vote(
             term=request.term,
-            candidate_id=request.candidate_id,
+            candidate_id=RaftId(request.candidate_id),
             last_log_index=request.last_log_index,
             last_log_term=request.last_log_term,
         )

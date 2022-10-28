@@ -4,13 +4,13 @@ from contextlib import suppress
 
 import pytest
 
-from raft.aio import Raft
-from raft.aio.peers import GrpcRaftPeer
-from raft.aio.server import GrpcRaftServer
+from aioraft import Raft
+from aioraft.client import GrpcRaftClient
+from aioraft.server import GrpcRaftServer
 
 
 @pytest.mark.asyncio
-async def test_raft_aio_leader_election():
+async def test_raft_leader_election():
     n = 5
     ports = tuple(range(50051, 50051 + n))
     configuration = [f"127.0.0.1:{port}" for port in ports]
@@ -19,7 +19,7 @@ async def test_raft_aio_leader_election():
         await Raft.new(
             f"raft.aio-{i}",
             server=server,
-            peer=GrpcRaftPeer(),
+            client=GrpcRaftClient(),
             configuration=filter(lambda x: x != addr, configuration),
         )
         for i, (server, addr) in enumerate(zip(servers, configuration))
@@ -39,8 +39,12 @@ async def test_raft_aio_leader_election():
                 leadership_timeout = time.time() - start_time
                 break
 
+    cleanup_coroutines = []
+
     raft_server_tasks = [
-        asyncio.create_task(server.run(host="0.0.0.0", port=port))
+        asyncio.create_task(
+            server.run(host="0.0.0.0", port=port, cleanup_coroutines=cleanup_coroutines)
+        )
         for server, port in zip(servers, ports)
     ]
     raft_main_tasks = [asyncio.create_task(raft.main()) for raft in raft_nodes]
@@ -54,6 +58,8 @@ async def test_raft_aio_leader_election():
     )
     assert any(map(lambda r: r.has_leadership(), raft_nodes))
     assert leadership_timeout < LEADERSHIP_CHECK_TIMEOUT
+
+    await asyncio.gather(*cleanup_coroutines)
 
     for task in pending:
         task.cancel()

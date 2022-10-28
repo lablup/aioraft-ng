@@ -1,12 +1,13 @@
 import os
+from pathlib import Path
 
 from setuptools import setup
 
 ROOT_PATH = os.path.abspath(os.path.dirname(__file__))
-VERSION = "0.1.0"
-long_description = """
-An implementation of `Raft` consensus algorithm written in Python 3.
-"""
+VERSION = (Path(__file__).parent / "aioraft" / "VERSION").read_text().strip()
+description = (
+    "An implementation of `Raft` consensus algorithm written in asyncio-based Python 3."
+)
 
 
 def get_requirements(env: str = None):
@@ -22,11 +23,16 @@ dev_requires = get_requirements("dev")
 
 
 setup(
-    name="raft",
+    name="aioraft-ng",
     version=VERSION,
-    long_description=long_description,
-    author="rapsealk",
-    package_dir={"raft": "raft"},
+    description=description,
+    author="Lablup Inc.",
+    maintainer="rapsealk",
+    maintainer_email="jskang@lablup.com",
+    url="https://github.com/lablup/aioraft-ng",
+    license="Apache License 2.0",
+    package_dir={"aioraft": "aioraft"},
+    package_data={"": ["VERSION"]},
     python_requires=">=3.10",
     install_requires=install_requires,
     extras_require={"dev": dev_requires},

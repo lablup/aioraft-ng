@@ -2,20 +2,21 @@ import argparse
 import asyncio
 from contextlib import suppress
 from pathlib import Path
-from typing import Coroutine, Final, List
+from typing import Coroutine, List
 
 import tomli
 
-from raft.aio import Raft
-from raft.aio.peers import AbstractRaftPeer, GrpcRaftPeer
-from raft.aio.server import GrpcRaftServer
-from raft.utils import build_loopback_ip
+from aioraft import Raft
+from aioraft.client import GrpcRaftClient
+from aioraft.server import GrpcRaftServer
+from aioraft.types import RaftState
+from aioraft.utils import build_loopback_ip
 
 _cleanup_coroutines: List[Coroutine] = []
 
 
 def load_config():
-    path = Path(__file__).parent.parent / "config.toml"
+    path = Path(__file__).parent / "config.toml"
     return tomli.loads(path.read_text())
 
 
@@ -37,10 +38,17 @@ async def _main():
         if not server.endswith(str(args.port))
     )
 
+    async def _on_state_changed(next_state: RaftState):
+        print(f"[_on_state_changed] next_state: {next_state}")
+
     server = GrpcRaftServer()
-    peer: Final[AbstractRaftPeer] = GrpcRaftPeer()
+    client = GrpcRaftClient()
     raft = await Raft.new(
-        public_id, server=server, peer=peer, configuration=configuration
+        public_id,
+        server=server,
+        client=client,
+        configuration=configuration,
+        on_state_changed=_on_state_changed,
     )
 
     done, pending = await asyncio.wait(

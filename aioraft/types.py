@@ -1,10 +1,10 @@
 import enum
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, NewType, Optional, Type, TypeVar
 
-from raft.protos import raft_pb2
+from aioraft.protos import raft_pb2
 
-RaftId = str
+RaftId = NewType("RaftId", str)
 
 
 class RaftState(enum.Enum):

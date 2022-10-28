@@ -1,6 +1,6 @@
 black
 flake8
-grpcio-tools~=1.47.0
+grpcio-tools==1.48.2
 isort
 mypy
 pytest~=7.1.2
