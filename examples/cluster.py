@@ -15,8 +15,12 @@ from aioraft.types import RaftState
 logging.basicConfig(level=logging.INFO)
 
 
-async def _main(pidx: int, address: str, configuration: Tuple[str, ...], cleanup_coroutines: List[Coroutine]):
-
+async def _main(
+    pidx: int,
+    address: str,
+    configuration: Tuple[str, ...],
+    cleanup_coroutines: List[Coroutine],
+):
     async def on_state_changed(next_state: RaftState):
         logging.info(f"[pidx={pidx}] state: {next_state}")
 
@@ -54,7 +58,12 @@ async def _main(pidx: int, address: str, configuration: Tuple[str, ...], cleanup
 async def amain(pidx: int, address: str, configuration: Tuple[str, ...]):
     cleanup_coroutines: List[Coroutine] = []
     try:
-        await _main(pidx=pidx, address=address, configuration=configuration, cleanup_coroutines=cleanup_coroutines)
+        await _main(
+            pidx=pidx,
+            address=address,
+            configuration=configuration,
+            cleanup_coroutines=cleanup_coroutines,
+        )
     finally:
         await asyncio.gather(*cleanup_coroutines)
 
