@@ -274,7 +274,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 return (self.current_term, False)
         # 3. If an existing entry conflicts with a new one (same index but different terms),
         #    delete the existing entry and all that follow it
-        new_entries = tuple()
+        new_entries: Tuple[raft_pb2.Log, ...] = tuple()
         for idx, new_entry in enumerate(entries):
             if (
                 not (existing_entry := await self._log.get(new_entry.index))
