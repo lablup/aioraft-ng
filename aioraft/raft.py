@@ -1,11 +1,12 @@
 import asyncio
-import inspect
 import logging
 import math
+import os
 from datetime import datetime
 from typing import Awaitable, Callable, Dict, Final, Iterable, Optional, Set, Tuple
 
 from aioraft.client import AbstractRaftClient
+from aioraft.logs import AbstractLogReplication, InMemoryLogReplication
 from aioraft.protocol import AbstractRaftProtocol
 from aioraft.protos import raft_pb2
 from aioraft.server import AbstractRaftServer
@@ -58,10 +59,9 @@ class Raft(aobject, AbstractRaftProtocol):
         client: AbstractRaftClient,
         configuration: Iterable[RaftId],
         on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
-        **kwargs,
     ):
         self.__id: Final[RaftId] = id_
-        self.__server: Final[AbstractRaftServer] = server
+        # self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
         self.__on_state_changed: Optional[
@@ -71,12 +71,14 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
 
-        self.__vote_lock = asyncio.Lock()
+        self._vote_lock = asyncio.Lock()
         self._vote_request_lock = asyncio.Lock()
+
+        # self._leader_event = asyncio.Event()
 
         server.bind(self)
 
-    async def __ainit__(self, *args, **kwargs):
+    async def __ainit__(self):
         await self._initialize_persistent_state()
         await self._initialize_volatile_state()
 
@@ -101,7 +103,7 @@ class Raft(aobject, AbstractRaftProtocol):
                         await asyncio.sleep(self.__election_timeout)
                 case RaftState.LEADER:
                     logging.info(
-                        f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})"
+                        f"[{datetime.now()}] LEADER({self.id}, pid={os.getpid()} term={self.current_term})"
                     )
                     while self.has_leadership():
                         await self._publish_heartbeat()
@@ -113,15 +115,15 @@ class Raft(aobject, AbstractRaftProtocol):
 
         currentTerm (int): latest term server has seen
                            (initialized to 0 on first boot, increases monotonically)
-        votedFor (raft.types.RaftId):
+        votedFor (aioraft.types.RaftId):
             candidateId that received vote in current term (or null if none)
-        log (Iterable[raft.protos.raft_pb2.Log]): log entries;
+        log (aioraft.logs.AbstractLogReplication): log entries;
             each entry contains command for state machine, and term when entry was received by leader
             (first index is 1)
         """
         self.__current_term: AtomicInteger = AtomicInteger(0)
-        self.__voted_for: Optional[RaftId] = None
-        self.__log: Iterable[raft_pb2.Log] = []
+        self._voted_for: Optional[RaftId] = None
+        self._log: AbstractLogReplication = InMemoryLogReplication()
 
     async def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
@@ -165,8 +167,8 @@ class Raft(aobject, AbstractRaftProtocol):
         if term > self.current_term:
             self.__current_term.set(term)
             await self.__change_state(RaftState.FOLLOWER)
-            async with self.__vote_lock:
-                self.__voted_for = None
+            async with self._vote_lock:
+                self._voted_for = None
 
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
@@ -174,15 +176,15 @@ class Raft(aobject, AbstractRaftProtocol):
         log.debug(f"[{self.__id[-5:]}] change_state(): {self.__state} -> {next_state}")
         self.__state = next_state
         if callback := self.__on_state_changed:
-            if inspect.iscoroutinefunction(callback):
+            if asyncio.iscoroutinefunction(callback):
                 await callback(next_state)
-            elif inspect.isfunction(callback):
+            elif callable(callback):
                 callback(next_state)
 
     async def _start_election(self) -> None:
         self.__current_term.increase()
-        async with self.__vote_lock:
-            self.__voted_for = self.id
+        async with self._vote_lock:
+            self._voted_for = self.id
 
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
@@ -207,14 +209,18 @@ class Raft(aobject, AbstractRaftProtocol):
         for term in terms:
             if term > current_term:
                 await self.__synchronize_term(term)
-                break
-        else:
-            if sum(grants) + 1 >= self.quorum:
-                await self.__change_state(RaftState.LEADER)
+                return
+        if sum(grants) + 1 >= self.quorum:
+            await self.__change_state(RaftState.LEADER)
 
     async def _publish_heartbeat(self) -> None:
         if not self.has_leadership():
             return
+
+        prev_log = {}
+        if entry := await self._log.last():
+            prev_log.update({"index": entry.index, "term": entry.term})
+
         terms, successes = zip(
             *await asyncio.gather(
                 *[
@@ -223,8 +229,8 @@ class Raft(aobject, AbstractRaftProtocol):
                             to=server,
                             term=self.current_term,
                             leader_id=self.id,
-                            prev_log_index=0,
-                            prev_log_term=0,
+                            prev_log_index=prev_log.get("index", 0),
+                            prev_log_term=prev_log.get("term", 0),
                             entries=(),
                             leader_commit=self.__commit_index,
                         ),
@@ -255,9 +261,36 @@ class Raft(aobject, AbstractRaftProtocol):
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
     ) -> Tuple[int, bool]:
+        # TODO: Lock
         await self.__reset_timeout()
+        # 1. Reply false if term < currentTerm
         if term < (current_term := self.current_term):
             return (current_term, False)
+        # 2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
+        if prev_log_index > 0:
+            if not (entry := await self._log.get(prev_log_index)):
+                return (self.current_term, False)
+            if entry.term != prev_log_term:
+                return (self.current_term, False)
+        # 3. If an existing entry conflicts with a new one (same index but different terms),
+        #    delete the existing entry and all that follow it
+        new_entries = tuple()
+        for idx, new_entry in enumerate(entries):
+            if (
+                not (existing_entry := await self._log.get(new_entry.index))
+                or existing_entry.term != new_entry.term
+            ):
+                await self._log.splice(new_entry.index)
+                new_entries = tuple(entries)[idx:]
+                break
+        # 4. Append any new entries not already in the log
+        await self._log.append(new_entries)
+        # 5. If leaderCommit > commitIndex, set commitIndex = min(leaderCommit, index of last new entry)
+        if leader_commit > self.__commit_index:
+            last_new_entry_index = (
+                new_entries[-1].index if new_entries else self.__commit_index
+            )
+            self.__commit_index = min(leader_commit, last_new_entry_index)
         await self.__synchronize_term(term)
         return (self.current_term, True)
 
@@ -278,12 +311,12 @@ class Raft(aobject, AbstractRaftProtocol):
                 return (current_term, False)
             await self.__synchronize_term(term)
 
-            async with self.__vote_lock:
+            async with self._vote_lock:
                 if self.voted_for in [None, candidate_id]:
                     log.debug(
                         f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
                     )
-                    self.__voted_for = candidate_id
+                    self._voted_for = candidate_id
                     return (self.current_term, True)
             log.debug(
                 f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
@@ -300,7 +333,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
     @property
     def voted_for(self) -> Optional[RaftId]:
-        return self.__voted_for
+        return self._voted_for
 
     @property
     def membership(self) -> int:
