@@ -192,6 +192,13 @@ class Raft(aobject, AbstractRaftProtocol):
         current_term = self.current_term
         logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
 
+        last_log_index = 0
+        last_log_term = 0
+
+        if entry := await self._log.last():
+            last_log_index = entry.index
+            last_log_term = entry.term
+
         terms, grants = zip(
             *await asyncio.gather(
                 *[
@@ -200,8 +207,8 @@ class Raft(aobject, AbstractRaftProtocol):
                             to=server,
                             term=current_term,
                             candidate_id=self.id,
-                            last_log_index=0,
-                            last_log_term=0,
+                            last_log_index=last_log_index,
+                            last_log_term=last_log_term,
                         ),
                     )
                     for server in self._configuration
@@ -334,7 +341,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
         def _check_up_to_date(entry, index: int, term: int) -> bool:
             if entry.term == term:
-                return entry.index >= index
+                return entry.index > index
             return entry.term > term
 
         # Check if the candidate's log is at least as up-to-date
