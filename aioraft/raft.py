@@ -309,6 +309,18 @@ class Raft(aobject, AbstractRaftProtocol):
         last_log_term: int,
     ) -> Tuple[int, bool]:
         await self.__reset_timeout()
+
+        def _check_up_to_date(entry, index: int, term: int) -> bool:
+            if entry.term == term:
+                return entry.index >= index
+            return entry.term > term
+
+        # Check if the candidate's log is at least as up-to-date
+        if entry := await self._log.last():
+            # Deny if its own log is more up-to-date than that of the candidate.
+            if _check_up_to_date(entry, index=last_log_index, term=last_log_term):
+                return (self.current_term, False)
+
         async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
