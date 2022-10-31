@@ -60,7 +60,7 @@ class Raft(aobject, AbstractRaftProtocol):
         configuration: Iterable[RaftId],
         on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
     ):
-        self.__id: Final[RaftId] = id_
+        self._id: Final[RaftId] = id_
         # self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
@@ -70,6 +70,8 @@ class Raft(aobject, AbstractRaftProtocol):
 
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
+
+        self._leader_id: Optional[RaftId] = None
 
         self._vote_lock = asyncio.Lock()
         self._vote_request_lock = asyncio.Lock()
@@ -173,7 +175,7 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
-        log.debug(f"[{self.__id[-5:]}] change_state(): {self.__state} -> {next_state}")
+        log.debug(f"[{self._id[-5:]}] change_state(): {self.__state} -> {next_state}")
         self.__state = next_state
         if callback := self.__on_state_changed:
             if asyncio.iscoroutinefunction(callback):
@@ -266,6 +268,11 @@ class Raft(aobject, AbstractRaftProtocol):
         # 1. Reply false if term < currentTerm
         if term < (current_term := self.current_term):
             return (current_term, False)
+        await self.__synchronize_term(term)
+        # X. Early response on heartbeat (no entries)
+        self._leader_id = leader_id
+        if not entries:
+            return (self.current_term, True)
         # 2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
         if prev_log_index > 0:
             if not (entry := await self._log.get(prev_log_index)):
@@ -291,7 +298,6 @@ class Raft(aobject, AbstractRaftProtocol):
                 new_entries[-1].index if new_entries else self.__commit_index
             )
             self.__commit_index = min(leader_commit, last_new_entry_index)
-        await self.__synchronize_term(term)
         return (self.current_term, True)
 
     async def on_request_vote(
@@ -306,7 +312,7 @@ class Raft(aobject, AbstractRaftProtocol):
         async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
-                    f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
+                    f"[on_request_vote] FALSE id={self._id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
                 )
                 return (current_term, False)
             await self.__synchronize_term(term)
@@ -314,18 +320,18 @@ class Raft(aobject, AbstractRaftProtocol):
             async with self._vote_lock:
                 if self.voted_for in [None, candidate_id]:
                     log.debug(
-                        f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                        f"[on_request_vote] TRUE id={self._id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
                     )
                     self._voted_for = candidate_id
                     return (self.current_term, True)
             log.debug(
-                f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                f"[on_request_vote] FALSE id={self._id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
             )
             return (self.current_term, False)
 
     @property
     def id(self) -> RaftId:
-        return self.__id
+        return self._id
 
     @property
     def current_term(self) -> int:
