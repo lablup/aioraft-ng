@@ -101,6 +101,22 @@ class Raft(aobject, AbstractRaftProtocol):
                         await self._initialize_volatile_state()
                         if self.has_leadership():
                             await self._initialize_leader_volatile_state()
+                            last = await self._log.last()
+
+                            await self.on_append_entries(
+                                term=self.current_term,
+                                leader_id=self._leader_id,
+                                prev_log_index=last.index,
+                                prev_log_term=last.term,
+                                leader_commit=self.__commit_index,
+                                entries=(
+                                    raft_pb2.Log(
+                                        index=last.index + 1,
+                                        term=self.current_term,
+                                        command=None,
+                                    )
+                                ),
+                            )
                             break
                         await asyncio.sleep(self.__election_timeout)
                 case RaftState.LEADER:
