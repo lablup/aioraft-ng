@@ -109,13 +109,13 @@ class Raft(aobject, AbstractRaftProtocol):
                                     prev_log_index=entry.index,
                                     prev_log_term=entry.term,
                                     leader_commit=self.__commit_index,
-                                    entries=(
+                                    entries=[
                                         raft_pb2.Log(
                                             index=entry.index + 1,
                                             term=self.current_term,
                                             command=None,
                                         )
-                                    ),
+                                    ],
                                 )
                             break
                         await asyncio.sleep(self.__election_timeout)
