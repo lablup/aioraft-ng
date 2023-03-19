@@ -5,7 +5,7 @@ import math
 from datetime import datetime
 from typing import Awaitable, Callable, Dict, Final, Iterable, Optional, Set, Tuple
 
-from aioraft.client import AbstractRaftClient
+from aioraft.peer import AbstractRaftPeer
 from aioraft.protocol import AbstractRaftProtocol
 from aioraft.protos import raft_pb2
 from aioraft.server import AbstractRaftServer
@@ -55,14 +55,14 @@ class Raft(aobject, AbstractRaftProtocol):
         self,
         id_: RaftId,
         server: AbstractRaftServer,
-        clients: Iterable[AbstractRaftClient],
+        peers: Iterable[AbstractRaftPeer],
         configuration: Iterable[RaftId],
         on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
         **kwargs,
     ):
         self._id: Final[RaftId] = id_
         self._server: Final[AbstractRaftServer] = server
-        self._clients: Final[Tuple[AbstractRaftClient]] = tuple(clients)
+        self._peers: Final[Tuple[AbstractRaftPeer]] = tuple(peers)
         self._configuration: Set[RaftId] = set(configuration)
         self._on_state_changed: Optional[
             Callable[[RaftState], Awaitable]
@@ -193,14 +193,14 @@ class Raft(aobject, AbstractRaftProtocol):
             *await asyncio.gather(
                 *[
                     asyncio.create_task(
-                        client.request_vote(
+                        peer.request_vote(
                             term=current_term,
                             candidate_id=self.id,
                             last_log_index=0,
                             last_log_term=0,
                         ),
                     )
-                    for client in self._clients
+                    for peer in self._peers
                 ]
             )
         )
@@ -220,7 +220,7 @@ class Raft(aobject, AbstractRaftProtocol):
             *await asyncio.gather(
                 *[
                     asyncio.create_task(
-                        client.append_entries(
+                        peer.append_entries(
                             term=self.current_term,
                             leader_id=self.id,
                             prev_log_index=0,
@@ -229,7 +229,7 @@ class Raft(aobject, AbstractRaftProtocol):
                             leader_commit=self._commit_index,
                         ),
                     )
-                    for client in self._clients
+                    for peer in self._peers
                 ]
             )
         )

@@ -8,7 +8,7 @@ from aioraft.protos import raft_pb2, raft_pb2_grpc
 from aioraft.types import RaftId
 
 
-class AbstractRaftClient(abc.ABC):
+class AbstractRaftPeer(abc.ABC):
     def __init__(self, to: str) -> None:
         """
         Arguments
@@ -78,9 +78,9 @@ class AbstractRaftClient(abc.ABC):
         raise NotImplementedError()
 
 
-class GrpcRaftClient(AbstractRaftClient):
+class GrpcRaftPeer(AbstractRaftPeer):
     """
-    A gRPC-based implementation of `AbstractRaftClient`.
+    A gRPC-based implementation of `AbstractRaftPeer`.
     """
 
     def __init__(self, to: str, credentials: Optional[grpc.ChannelCredentials] = None):

@@ -7,7 +7,7 @@ from typing import Coroutine, List
 import tomli
 
 from aioraft import Raft
-from aioraft.client import GrpcRaftClient
+from aioraft.peer import GrpcRaftPeer
 from aioraft.server import GrpcRaftServer
 from aioraft.types import RaftState
 from aioraft.utils import build_loopback_ip
@@ -42,11 +42,11 @@ async def _main():
         pass
 
     server = GrpcRaftServer(host="0.0.0.0", port=args.port)
-    clients = [GrpcRaftClient(to=to) for to in configuration]
+    peers = [GrpcRaftPeer(to=to) for to in configuration]
     raft = await Raft.new(
         public_id,
         server=server,
-        clients=clients,
+        peers=peers,
         configuration=configuration,
         on_state_changed=_on_state_changed,
     )

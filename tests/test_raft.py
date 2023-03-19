@@ -5,7 +5,7 @@ from contextlib import suppress
 import pytest
 
 from aioraft import Raft
-from aioraft.client import GrpcRaftClient
+from aioraft.peer import GrpcRaftPeer
 from aioraft.server import GrpcRaftServer
 
 
@@ -18,12 +18,12 @@ async def test_raft_leader_election():
     raft_nodes = []
     for i, (server, addr) in enumerate(zip(servers, configuration)):
         config = tuple(filter(lambda x: x != addr, configuration))
-        clients = [GrpcRaftClient(to=to) for to in config]
+        peers = [GrpcRaftPeer(to=to) for to in config]
         raft_nodes.append(
             await Raft.new(
                 f"raft.aio-{i}",
                 server=server,
-                clients=clients,
+                peers=peers,
                 configuration=config,
             )
         )
