@@ -39,14 +39,14 @@ async def _main():
     )
 
     async def _on_state_changed(next_state: RaftState):
-        print(f"[_on_state_changed] next_state: {next_state}")
+        pass
 
-    server = GrpcRaftServer()
-    client = GrpcRaftClient()
+    server = GrpcRaftServer(host="0.0.0.0", port=args.port)
+    clients = [GrpcRaftClient(to=to) for to in configuration]
     raft = await Raft.new(
         public_id,
         server=server,
-        client=client,
+        clients=clients,
         configuration=configuration,
         on_state_changed=_on_state_changed,
     )
@@ -55,8 +55,6 @@ async def _main():
         {
             asyncio.create_task(
                 server.run(
-                    host="0.0.0.0",
-                    port=args.port,
                     cleanup_coroutines=_cleanup_coroutines,
                 ),
             ),

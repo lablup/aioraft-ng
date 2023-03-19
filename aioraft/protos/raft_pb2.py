@@ -81,7 +81,6 @@ _sym_db.RegisterMessage(Log)
 
 _RAFTSERVICE = DESCRIPTOR.services_by_name["RaftService"]
 if _descriptor._USE_C_DESCRIPTORS == False:
-
     DESCRIPTOR._options = None
     _APPENDENTRIESREQUEST._serialized_start = 15
     _APPENDENTRIESREQUEST._serialized_end = 163

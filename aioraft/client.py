@@ -9,11 +9,19 @@ from aioraft.types import RaftId
 
 
 class AbstractRaftClient(abc.ABC):
+    def __init__(self, to: str) -> None:
+        """
+        Arguments
+        ---------
+        :param str to: follower's IP address with port (e.g. "127.0.0.1:50051")
+        ---------
+        """
+        self._to = to
+
     @abc.abstractmethod
     async def append_entries(
         self,
         *,
-        to: str,
         term: int,
         leader_id: RaftId,
         prev_log_index: int,
@@ -25,7 +33,6 @@ class AbstractRaftClient(abc.ABC):
 
         Arguments
         ---------
-        :param str to: follower's IP address with port (e.g. "127.0.0.1:50051")
         :param int term: leader's term
         :param raft.types.RaftId leader_id: so follower can redirect clients
         :param int prev_log_index: index of log entry immediately preceding new ones
@@ -47,7 +54,6 @@ class AbstractRaftClient(abc.ABC):
     async def request_vote(
         self,
         *,
-        to: str,
         term: int,
         candidate_id: RaftId,
         last_log_index: int,
@@ -57,7 +63,6 @@ class AbstractRaftClient(abc.ABC):
 
         Arguments
         ---------
-        :param str to: follower's IP address with port (e.g. "127.0.0.1:50051")
         :param int term: candidate's term
         :param raft.types.RaftId candidate_id: candidate requesting vote
         :param int last_log_index: index of candidate's last log entry
@@ -78,13 +83,13 @@ class GrpcRaftClient(AbstractRaftClient):
     A gRPC-based implementation of `AbstractRaftClient`.
     """
 
-    def __init__(self, credentials: Optional[grpc.ChannelCredentials] = None):
+    def __init__(self, to: str, credentials: Optional[grpc.ChannelCredentials] = None):
+        super().__init__(to=to)
         self.__credentials: Optional[grpc.ChannelCredentials] = credentials
 
     async def append_entries(
         self,
         *,
-        to: str,
         term: int,
         leader_id: RaftId,
         prev_log_index: int,
@@ -101,7 +106,7 @@ class GrpcRaftClient(AbstractRaftClient):
             entries=entries,
             leader_commit=leader_commit,
         )
-        async with self.__create_channel(to) as channel:
+        async with self.__create_channel() as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
                 response = await asyncio.wait_for(
@@ -119,7 +124,6 @@ class GrpcRaftClient(AbstractRaftClient):
     async def request_vote(
         self,
         *,
-        to: str,
         term: int,
         candidate_id: RaftId,
         last_log_index: int,
@@ -132,7 +136,7 @@ class GrpcRaftClient(AbstractRaftClient):
             last_log_index=last_log_index,
             last_log_term=last_log_term,
         )
-        async with self.__create_channel(to) as channel:
+        async with self.__create_channel() as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
                 response = await asyncio.wait_for(
@@ -147,7 +151,7 @@ class GrpcRaftClient(AbstractRaftClient):
                 raise
             return term, False
 
-    def __create_channel(self, target: str) -> grpc.aio.Channel:
+    def __create_channel(self) -> grpc.aio.Channel:
         if credentials := self.__credentials:
-            return grpc.aio.secure_channel(target, credentials)
-        return grpc.aio.insecure_channel(target)
+            return grpc.aio.secure_channel(self._to, credentials)
+        return grpc.aio.insecure_channel(self._to)
