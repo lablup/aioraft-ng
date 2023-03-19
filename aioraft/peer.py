@@ -9,14 +9,17 @@ from aioraft.types import RaftId
 
 
 class AbstractRaftPeer(abc.ABC):
-    def __init__(self, to: str) -> None:
+    def __init__(
+        self, to: str, credentials: Optional[grpc.ChannelCredentials] = None
+    ) -> None:
         """
         Arguments
         ---------
         :param str to: follower's IP address with port (e.g. "127.0.0.1:50051")
         ---------
         """
-        self._to = to
+        self.__to = to
+        self.__credentials = credentials
 
     @abc.abstractmethod
     async def append_entries(
@@ -77,15 +80,16 @@ class AbstractRaftPeer(abc.ABC):
         """
         raise NotImplementedError()
 
+    def create_channel(self) -> grpc.aio.Channel:
+        if credentials := self.__credentials:
+            return grpc.aio.secure_channel(self.__to, credentials)
+        return grpc.aio.insecure_channel(self.__to)
+
 
 class GrpcRaftPeer(AbstractRaftPeer):
     """
     A gRPC-based implementation of `AbstractRaftPeer`.
     """
-
-    def __init__(self, to: str, credentials: Optional[grpc.ChannelCredentials] = None):
-        super().__init__(to=to)
-        self.__credentials: Optional[grpc.ChannelCredentials] = credentials
 
     async def append_entries(
         self,
@@ -106,10 +110,10 @@ class GrpcRaftPeer(AbstractRaftPeer):
             entries=entries,
             leader_commit=leader_commit,
         )
-        async with self.__create_channel() as channel:
+        async with self.create_channel() as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(
+                response: raft_pb2.AppendEntriesResponse = await asyncio.wait_for(
                     stub.AppendEntries(request), timeout=timeout
                 )
                 return response.term, response.success
@@ -136,10 +140,10 @@ class GrpcRaftPeer(AbstractRaftPeer):
             last_log_index=last_log_index,
             last_log_term=last_log_term,
         )
-        async with self.__create_channel() as channel:
+        async with self.create_channel() as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(
+                response: raft_pb2.RequestVoteResponse = await asyncio.wait_for(
                     stub.RequestVote(request), timeout=timeout
                 )
                 return response.term, response.vote_granted
@@ -150,8 +154,3 @@ class GrpcRaftPeer(AbstractRaftPeer):
             except Exception:
                 raise
             return term, False
-
-    def __create_channel(self) -> grpc.aio.Channel:
-        if credentials := self.__credentials:
-            return grpc.aio.secure_channel(self._to, credentials)
-        return grpc.aio.insecure_channel(self._to)

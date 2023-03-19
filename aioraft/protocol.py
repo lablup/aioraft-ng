@@ -73,3 +73,45 @@ class AbstractRaftProtocol(abc.ABC):
         -------
         """
         raise NotImplementedError()
+
+    @abc.abstractmethod
+    async def on_client_request(
+        self,
+        *,
+        client_id: str,
+        sequence_num: int,
+        command: str,
+    ) -> Tuple[bool, str, str]:
+        """Receiver implementation:
+        1. Reply NOT_LEADER if not leader, providing hint when available
+        2. Append command to log, replicate and commit it
+        3. Reply SESSION_EXPIRED if no record of clientId or if response for client's sequenceNum already discarded
+        4. If sequenceNum already processed from client, reply OK with stored response
+        5. Apply command in log order
+        6. Save state machine output with sequenceNum for client, discard any prior response for client
+        7. Reply OK with state machine output
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def on_register_client(self) -> Tuple[bool, str, str]:
+        """Receiver implementation:
+        1. Reply NOT_LEADER if not leader, providing hint when available
+        2. Append register command to log, replicate and commit it
+        3. Apply command in log order, allocating session for new client
+        4. Reply OK with unique client identifier (the log index of this register command can be used)
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def on_client_query(self, *, query: str) -> Tuple[bool, str, str]:
+        """Receiver implementation:
+        1. Reply NOT_LEADER if not leader, providing hint when available
+        2. Wait until last committed entry is from this leader's term
+        3. Save commitIndex as local variable readIndex (used below)
+        4. Send new round of heartbeats, and wait for reply from majority of servers
+        5. Wait for state machine to advance at least to the readIndex log entry
+        6. Process query
+        7. Reply OK with state machine output
+        """
+        raise NotImplementedError

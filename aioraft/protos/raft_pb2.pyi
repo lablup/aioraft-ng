@@ -49,6 +49,57 @@ class AppendEntriesResponse(_message.Message):
     term: int
     def __init__(self, term: _Optional[int] = ..., success: bool = ...) -> None: ...
 
+class ClientQueryRequest(_message.Message):
+    __slots__ = ["query"]
+    QUERY_FIELD_NUMBER: _ClassVar[int]
+    query: str
+    def __init__(self, query: _Optional[str] = ...) -> None: ...
+
+class ClientQueryResponse(_message.Message):
+    __slots__ = ["leader_hint", "response", "status"]
+    LEADER_HINT_FIELD_NUMBER: _ClassVar[int]
+    RESPONSE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    leader_hint: str
+    response: str
+    status: bool
+    def __init__(
+        self,
+        status: bool = ...,
+        response: _Optional[str] = ...,
+        leader_hint: _Optional[str] = ...,
+    ) -> None: ...
+
+class ClientRequestRequest(_message.Message):
+    __slots__ = ["client_id", "command", "sequence_num"]
+    CLIENT_ID_FIELD_NUMBER: _ClassVar[int]
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    SEQUENCE_NUM_FIELD_NUMBER: _ClassVar[int]
+    client_id: str
+    command: str
+    sequence_num: int
+    def __init__(
+        self,
+        client_id: _Optional[str] = ...,
+        sequence_num: _Optional[int] = ...,
+        command: _Optional[str] = ...,
+    ) -> None: ...
+
+class ClientRequestResponse(_message.Message):
+    __slots__ = ["leader_hint", "response", "status"]
+    LEADER_HINT_FIELD_NUMBER: _ClassVar[int]
+    RESPONSE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    leader_hint: str
+    response: str
+    status: bool
+    def __init__(
+        self,
+        status: bool = ...,
+        response: _Optional[str] = ...,
+        leader_hint: _Optional[str] = ...,
+    ) -> None: ...
+
 class Log(_message.Message):
     __slots__ = ["command", "index", "term"]
     COMMAND_FIELD_NUMBER: _ClassVar[int]
@@ -62,6 +113,25 @@ class Log(_message.Message):
         index: _Optional[int] = ...,
         term: _Optional[int] = ...,
         command: _Optional[str] = ...,
+    ) -> None: ...
+
+class RegisterClientRequest(_message.Message):
+    __slots__ = []
+    def __init__(self) -> None: ...
+
+class RegisterClientResponse(_message.Message):
+    __slots__ = ["client_id", "leader_hint", "status"]
+    CLIENT_ID_FIELD_NUMBER: _ClassVar[int]
+    LEADER_HINT_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    client_id: str
+    leader_hint: str
+    status: bool
+    def __init__(
+        self,
+        status: bool = ...,
+        client_id: _Optional[str] = ...,
+        leader_hint: _Optional[str] = ...,
     ) -> None: ...
 
 class RequestVoteRequest(_message.Message):
