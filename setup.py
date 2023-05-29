@@ -10,16 +10,13 @@ description = (
 )
 
 
-def get_requirements(env: str = None):
-    requirements = "requirements"
-    if env is not None:
-        requirements = f"{requirements}-{env}"
+def get_requirements(env: str = "base"):
+    requirements = os.path.join("requirements", env)
     with open(f"{requirements}.txt".format(env)) as fp:
         return [x.strip() for x in fp.read().split("\n") if not x.startswith("#")]
 
 
 install_requires = get_requirements()
-dev_requires = get_requirements("dev")
 
 
 setup(
@@ -35,7 +32,7 @@ setup(
     package_data={"": ["VERSION"]},
     python_requires=">=3.10",
     install_requires=install_requires,
-    extras_require={"dev": dev_requires},
+    extras_require={},
     zip_safe=False,
     include_package_data=True,
 )
