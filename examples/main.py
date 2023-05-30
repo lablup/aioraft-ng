@@ -1,50 +1,46 @@
 import argparse
 import asyncio
+import logging
 from contextlib import suppress
-from pathlib import Path
 from typing import Coroutine, List
-
-import tomli
 
 from aioraft import Raft
 from aioraft.client import GrpcRaftClient
+from aioraft.common.logging_utils import BraceStyleAdapter
 from aioraft.server import GrpcRaftServer
-from aioraft.types import RaftState
+from aioraft.types import HostPortPair, RaftState
 from aioraft.utils import build_loopback_ip
+
+log = BraceStyleAdapter(logging.getLogger(__name__))
 
 _cleanup_coroutines: List[Coroutine] = []
 
-
-def load_config():
-    path = Path(__file__).parent / "config.toml"
-    return tomli.loads(path.read_text())
+PORTS = (50051, 50052, 50053, 50054, 50055)
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", "-p", type=int, default=50051)
+    parser.add_argument("--id", "-i", type=int)
     return parser.parse_args()
 
 
 async def _main():
     args = parse_args()
+    port = PORTS[args.id]
     public_ip = build_loopback_ip()
-    public_id = f"{public_ip}:{args.port}"
+    public_id = HostPortPair(public_ip, port)
 
-    config = load_config()
     configuration = tuple(
-        server
-        for server in config["raft"]["configuration"]
-        if not server.endswith(str(args.port))
+        HostPortPair(public_ip, port_) for port_ in set(PORTS) - set(port)
     )
 
     async def _on_state_changed(next_state: RaftState):
-        print(f"[_on_state_changed] next_state: {next_state}")
+        log.info("STATE_CHANGE (n:{} next:{})", public_id, next_state)
 
     server = GrpcRaftServer()
     client = GrpcRaftClient()
     raft = await Raft.new(
-        public_id,
+        str(public_id),
         server=server,
         client=client,
         configuration=configuration,

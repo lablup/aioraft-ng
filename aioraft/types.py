@@ -1,5 +1,7 @@
 import enum
-from typing import NewType, Type, TypeVar
+import ipaddress
+from collections import namedtuple
+from typing import NewType, Tuple, Type, TypeVar
 
 RaftId = NewType("RaftId", str)
 
@@ -48,3 +50,13 @@ class aobject(object):
         the vanilla Python classes.
         """
         pass
+
+
+class HostPortPair(namedtuple("HostPortPair", "host port")):
+    def as_sockaddr(self) -> Tuple[str, int]:
+        return str(self.host), self.port
+
+    def __str__(self) -> str:
+        if isinstance(self.host, ipaddress.IPv6Address):
+            return f"[{self.host}]:{self.port}"
+        return f"{self.host}:{self.port}"
