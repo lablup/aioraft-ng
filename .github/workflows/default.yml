@@ -2,15 +2,18 @@ name: default
 
 on: [push, pull_request]
 
+env:
+  PYTHON_VERSION: 3.11.3
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.10.5
+    - name: Set up Python $PYTHON_VERSION
       uses: actions/setup-python@v2
       with:
-        python-version: "3.10.5"
+        python-version: "$PYTHON_VERSION"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -32,10 +35,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.10.5
+    - name: Set up Python $PYTHON_VERSION
       uses: actions/setup-python@v2
       with:
-        python-version: "3.10.5"
+        python-version: "$PYTHON_VERSION"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -48,10 +51,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.10.5
+    - name: Set up Python $PYTHON_VERSION
       uses: actions/setup-python@v2
       with:
-        python-version: "3.10.5"
+        python-version: "$PYTHON_VERSION"
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
@@ -70,7 +73,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v2
         with:
-          python-version: "3.10.5"
+          python-version: "$PYTHON_VERSION"
       - name: Install dependencies
         env:
           REQUIREMENTS_FILE: build
