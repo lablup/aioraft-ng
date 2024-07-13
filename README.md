@@ -1,4 +1,8 @@
 # aioraft-ng
+
+> [!NOTE]
+> This project has been archived and superseded by [lablup/raftify](https://github.com/lablup/raftify).
+
 ![ci](https://github.com/lablup/raft-py/workflows/default/badge.svg)
 * Unofficial implementation of `Raft` consensus algorithm written in asyncio-based Python 3.
 
