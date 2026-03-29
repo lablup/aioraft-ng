@@ -277,6 +277,11 @@ class Raft(aobject, AbstractRaftProtocol):
             ]
         )
 
+        for term, _ in results:
+            if term > self.current_term:
+                await self.__synchronize_term(term)
+                return False
+
         grants = sum(1 for _, granted in results if granted)
         # +1 counts self (we would vote for ourselves)
         return grants + 1 >= self.quorum
@@ -765,6 +770,10 @@ class Raft(aobject, AbstractRaftProtocol):
 
         # Reject if the prospective term is behind our current term
         if term < current_term:
+            return (current_term, False)
+
+        # Reject if we have a current leader (haven't timed out)
+        if self.__leader_id is not None and self.__heartbeat_event.is_set():
             return (current_term, False)
 
         # Check if the candidate's log is at least as up-to-date as ours
