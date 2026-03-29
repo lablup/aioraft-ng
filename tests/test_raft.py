@@ -4659,10 +4659,7 @@ class TestBatchedReplication:
         raft._Raft__state = RaftState.LEADER
         raft._Raft__current_term.set(1)
         num_entries = raft.MAX_ENTRIES_PER_BATCH + 50
-        raft._Raft__log = [
-            raft_pb2.Log(index=i + 1, term=1, command=f"SET k{i} v{i}")
-            for i in range(num_entries)
-        ]
+        raft._Raft__log = [raft_pb2.Log(index=i + 1, term=1, command=f"SET k{i} v{i}") for i in range(num_entries)]
         raft._Raft__next_index = {"node-2": 1}
         raft._Raft__match_index = {"node-2": 0}
         raft._Raft__commit_index = 0
