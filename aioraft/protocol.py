@@ -86,3 +86,31 @@ class AbstractRaftProtocol(abc.ABC):
         -------
         """
         raise NotImplementedError()
+
+    @abc.abstractmethod
+    async def on_install_snapshot(
+        self,
+        *,
+        term: int,
+        leader_id: RaftId,
+        last_included_index: int,
+        last_included_term: int,
+        data: bytes,
+    ) -> Tuple[int]:
+        """Receiver implementation for InstallSnapshot RPC.
+
+        Arguments
+        ---------
+        :param int term: leader's term
+        :param RaftId leader_id: so follower can redirect clients
+        :param int last_included_index: the snapshot replaces all entries up through and including this index
+        :param int last_included_term: term of last_included_index entry
+        :param bytes data: serialized snapshot of state machine
+        ---------
+
+        Returns
+        -------
+        :param int term: currentTerm, for leader to update itself
+        -------
+        """
+        raise NotImplementedError()

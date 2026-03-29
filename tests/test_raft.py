@@ -1680,3 +1680,723 @@ class TestRaftWithStorage:
         )
 
         assert await storage.load_vote() is None
+
+
+class TestSnapshotStateMachine:
+    """Tests for KeyValueStateMachine snapshot/restore."""
+
+    @pytest.mark.asyncio
+    async def test_snapshot_and_restore(self):
+        sm = KeyValueStateMachine()
+        await sm.apply("SET a 1")
+        await sm.apply("SET b 2")
+        data = await sm.snapshot()
+
+        sm2 = KeyValueStateMachine()
+        await sm2.restore(data)
+        assert await sm2.apply("GET a") == "1"
+        assert await sm2.apply("GET b") == "2"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_empty_state(self):
+        sm = KeyValueStateMachine()
+        data = await sm.snapshot()
+        sm2 = KeyValueStateMachine()
+        await sm2.restore(data)
+        assert sm2._store == {}
+
+    @pytest.mark.asyncio
+    async def test_restore_replaces_state(self):
+        sm = KeyValueStateMachine()
+        await sm.apply("SET old_key old_val")
+        data_empty = await KeyValueStateMachine().snapshot()
+        await sm.restore(data_empty)
+        assert sm._store == {}
+
+
+class TestLogCompaction:
+    """Tests for log compaction via snapshots."""
+
+    @pytest.mark.asyncio
+    async def test_log_compacted_after_threshold(self):
+        """Log should be compacted when it exceeds snapshot_threshold."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            snapshot_threshold=5,
+        )
+
+        # Inject 10 log entries
+        entries = [
+            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}")
+            for i in range(1, 11)
+        ]
+        raft._Raft__log = entries
+
+        # Apply all entries to state machine
+        for e in entries:
+            await sm.apply(e.command)
+
+        # Set last_applied and commit_index
+        raft._Raft__last_applied = 10
+        raft._Raft__commit_index = 10
+
+        # Trigger snapshot creation
+        await raft._maybe_create_snapshot()
+
+        # Log should be compacted
+        assert raft._Raft__last_included_index == 10
+        assert raft._Raft__last_included_term == 1
+        assert len(raft._Raft__log) == 0
+
+    @pytest.mark.asyncio
+    async def test_log_indexing_after_compaction(self):
+        """_log_at_index should return correct entries after compaction."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        # Simulate a compacted state: snapshot covers indices 1-5
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = [
+            raft_pb2.Log(index=6, term=3, command="SET f 6"),
+            raft_pb2.Log(index=7, term=3, command="SET g 7"),
+        ]
+
+        # Compacted entries should return None
+        assert raft._log_at_index(1) is None
+        assert raft._log_at_index(5) is None
+
+        # Entries after snapshot should be accessible
+        assert raft._log_at_index(6) is not None
+        assert raft._log_at_index(6).command == "SET f 6"
+        assert raft._log_at_index(7).command == "SET g 7"
+
+        # Beyond log should return None
+        assert raft._log_at_index(8) is None
+
+    @pytest.mark.asyncio
+    async def test_get_last_log_info_after_compaction(self):
+        """_get_last_log_info should return snapshot metadata if log is empty."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        # Empty log with snapshot
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 3
+        raft._Raft__log = []
+
+        index, term = raft._get_last_log_info()
+        assert index == 10
+        assert term == 3
+
+    @pytest.mark.asyncio
+    async def test_get_last_log_info_with_log_after_compaction(self):
+        """_get_last_log_info should return last log entry if log is non-empty."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = [
+            raft_pb2.Log(index=6, term=3, command="SET f 6"),
+        ]
+
+        index, term = raft._get_last_log_info()
+        assert index == 6
+        assert term == 3
+
+    @pytest.mark.asyncio
+    async def test_append_entry_index_after_compaction(self):
+        """_append_entry should use correct index after compaction."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(3)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = []
+
+        entry = await raft._append_entry("SET x 1")
+        assert entry.index == 11
+
+    @pytest.mark.asyncio
+    async def test_no_snapshot_without_state_machine(self):
+        """_maybe_create_snapshot should be a no-op without a state machine."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            snapshot_threshold=2,
+        )
+
+        raft._Raft__log = [
+            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}")
+            for i in range(1, 6)
+        ]
+        raft._Raft__last_applied = 5
+        raft._Raft__commit_index = 5
+
+        await raft._maybe_create_snapshot()
+        # No compaction since no state machine
+        assert raft._Raft__last_included_index == 0
+        assert len(raft._Raft__log) == 5
+
+
+class TestInstallSnapshot:
+    """Tests for InstallSnapshot RPC handling."""
+
+    @pytest.mark.asyncio
+    async def test_follower_receives_and_applies_snapshot(self):
+        """Follower should restore state machine from snapshot."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        # Create snapshot data
+        import json
+        snapshot_data = json.dumps({"a": "1", "b": "2"}).encode("utf-8")
+
+        (resp_term,) = await raft.on_install_snapshot(
+            term=5,
+            leader_id="leader",
+            last_included_index=10,
+            last_included_term=4,
+            data=snapshot_data,
+        )
+
+        assert resp_term == 5
+        assert raft._Raft__last_included_index == 10
+        assert raft._Raft__last_included_term == 4
+        assert raft._Raft__commit_index == 10
+        assert raft._Raft__last_applied == 10
+        assert sm._store == {"a": "1", "b": "2"}
+
+    @pytest.mark.asyncio
+    async def test_stale_term_snapshot_rejected(self):
+        """InstallSnapshot with stale term should be rejected."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(5)
+
+        (resp_term,) = await raft.on_install_snapshot(
+            term=3,
+            leader_id="leader",
+            last_included_index=10,
+            last_included_term=2,
+            data=b"{}",
+        )
+
+        assert resp_term == 5
+        # State should be unchanged
+        assert raft._Raft__last_included_index == 0
+
+    @pytest.mark.asyncio
+    async def test_follower_discards_log_entries_covered_by_snapshot(self):
+        """InstallSnapshot should discard log entries covered by the snapshot."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        # Follower has some log entries
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+            raft_pb2.Log(index=3, term=2, command="SET c 3"),
+        ]
+
+        import json
+        snapshot_data = json.dumps({"x": "10"}).encode("utf-8")
+
+        await raft.on_install_snapshot(
+            term=3,
+            leader_id="leader",
+            last_included_index=2,
+            last_included_term=1,
+            data=snapshot_data,
+        )
+
+        # Only entry at index 3 should remain
+        assert len(raft._Raft__log) == 1
+        assert raft._Raft__log[0].index == 3
+
+    @pytest.mark.asyncio
+    async def test_install_snapshot_resets_election_timer(self):
+        """InstallSnapshot should reset the election timer."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(1)
+        raft._Raft__elapsed_time = 0.2
+
+        await raft.on_install_snapshot(
+            term=2,
+            leader_id="leader",
+            last_included_index=5,
+            last_included_term=1,
+            data=b"{}",
+        )
+
+        assert raft._elapsed_time == pytest.approx(0.0)
+
+
+class TestSnapshotStorage:
+    """Tests for snapshot persistence in storage backends."""
+
+    @pytest.mark.asyncio
+    async def test_memory_storage_save_load_snapshot(self):
+        storage = MemoryStorage()
+        assert await storage.load_snapshot() is None
+
+        await storage.save_snapshot(10, 3, b"snapshot-data")
+        result = await storage.load_snapshot()
+        assert result is not None
+        assert result == (10, 3, b"snapshot-data")
+
+    @pytest.mark.asyncio
+    async def test_memory_storage_overwrite_snapshot(self):
+        storage = MemoryStorage()
+        await storage.save_snapshot(5, 1, b"old")
+        await storage.save_snapshot(10, 2, b"new")
+        result = await storage.load_snapshot()
+        assert result == (10, 2, b"new")
+
+    @pytest.mark.asyncio
+    async def test_sqlite_save_load_snapshot(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            storage = SQLiteStorage(db_path=f.name)
+            await storage.initialize()
+
+            assert await storage.load_snapshot() is None
+
+            await storage.save_snapshot(10, 3, b"snapshot-data")
+            result = await storage.load_snapshot()
+            assert result is not None
+            assert result == (10, 3, b"snapshot-data")
+            await storage.close()
+
+    @pytest.mark.asyncio
+    async def test_sqlite_overwrite_snapshot(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            storage = SQLiteStorage(db_path=f.name)
+            await storage.initialize()
+
+            await storage.save_snapshot(5, 1, b"old")
+            await storage.save_snapshot(10, 2, b"new")
+            result = await storage.load_snapshot()
+            assert result == (10, 2, b"new")
+            await storage.close()
+
+    @pytest.mark.asyncio
+    async def test_snapshot_with_storage_integration(self):
+        """Snapshot should be persisted through Raft's on_install_snapshot."""
+        storage = MemoryStorage()
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        import json
+        snapshot_data = json.dumps({"key": "val"}).encode("utf-8")
+
+        await raft.on_install_snapshot(
+            term=3,
+            leader_id="leader",
+            last_included_index=10,
+            last_included_term=2,
+            data=snapshot_data,
+        )
+
+        result = await storage.load_snapshot()
+        assert result is not None
+        assert result[0] == 10
+        assert result[1] == 2
+        assert result[2] == snapshot_data
+
+
+class TestCompactLogWithSnapshot:
+    """Tests for the atomic compact_log_with_snapshot storage method (B1 fix)."""
+
+    @pytest.mark.asyncio
+    async def test_memory_compact_log_with_snapshot(self):
+        storage = MemoryStorage()
+        logs = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+            raft_pb2.Log(index=3, term=2, command="SET c 3"),
+        ]
+        await storage.append_logs(logs)
+
+        remaining = [raft_pb2.Log(index=3, term=2, command="SET c 3")]
+        await storage.compact_log_with_snapshot(2, 1, b"snap", remaining)
+
+        snapshot = await storage.load_snapshot()
+        assert snapshot == (2, 1, b"snap")
+        loaded_logs = await storage.load_logs()
+        assert len(loaded_logs) == 1
+        assert loaded_logs[0].index == 3
+
+    @pytest.mark.asyncio
+    async def test_sqlite_compact_log_with_snapshot(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            storage = SQLiteStorage(db_path=f.name)
+            await storage.initialize()
+
+            logs = [
+                raft_pb2.Log(index=1, term=1, command="SET a 1"),
+                raft_pb2.Log(index=2, term=1, command="SET b 2"),
+                raft_pb2.Log(index=3, term=2, command="SET c 3"),
+            ]
+            await storage.append_logs(logs)
+
+            remaining = [raft_pb2.Log(index=3, term=2, command="SET c 3")]
+            await storage.compact_log_with_snapshot(2, 1, b"snap", remaining)
+
+            snapshot = await storage.load_snapshot()
+            assert snapshot == (2, 1, b"snap")
+            loaded_logs = await storage.load_logs()
+            assert len(loaded_logs) == 1
+            assert loaded_logs[0].index == 3
+            await storage.close()
+
+    @pytest.mark.asyncio
+    async def test_compact_log_with_snapshot_empty_remaining(self):
+        storage = MemoryStorage()
+        await storage.append_logs([raft_pb2.Log(index=1, term=1, command="x")])
+        await storage.compact_log_with_snapshot(1, 1, b"snap", [])
+
+        snapshot = await storage.load_snapshot()
+        assert snapshot == (1, 1, b"snap")
+        assert await storage.load_logs() == []
+
+
+class TestStaleSnapshotGuard:
+    """Tests for B4: guard against stale/duplicate InstallSnapshot RPCs."""
+
+    @pytest.mark.asyncio
+    async def test_stale_snapshot_rejected(self):
+        """InstallSnapshot with last_included_index <= current should be rejected."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        # Pre-set snapshot metadata to simulate having a snapshot at index 10
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 3
+        raft._Raft__current_term.set(5)
+
+        import json
+        old_data = json.dumps({"old": "data"}).encode("utf-8")
+
+        # Try to install a snapshot at index 8 (older)
+        (resp_term,) = await raft.on_install_snapshot(
+            term=5,
+            leader_id="leader",
+            last_included_index=8,
+            last_included_term=2,
+            data=old_data,
+        )
+
+        assert resp_term == 5
+        # State should be unchanged
+        assert raft._Raft__last_included_index == 10
+        assert raft._Raft__last_included_term == 3
+
+    @pytest.mark.asyncio
+    async def test_duplicate_snapshot_rejected(self):
+        """InstallSnapshot with same last_included_index should be rejected."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__current_term.set(3)
+
+        (resp_term,) = await raft.on_install_snapshot(
+            term=3,
+            leader_id="leader",
+            last_included_index=5,
+            last_included_term=2,
+            data=b"{}",
+        )
+
+        assert resp_term == 3
+        # Index should remain unchanged (not re-processed)
+        assert raft._Raft__last_included_index == 5
+
+    @pytest.mark.asyncio
+    async def test_newer_snapshot_accepted(self):
+        """InstallSnapshot with greater last_included_index should be accepted."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__current_term.set(3)
+
+        import json
+        snapshot_data = json.dumps({"new": "state"}).encode("utf-8")
+
+        (resp_term,) = await raft.on_install_snapshot(
+            term=3,
+            leader_id="leader",
+            last_included_index=10,
+            last_included_term=3,
+            data=snapshot_data,
+        )
+
+        assert resp_term == 3
+        assert raft._Raft__last_included_index == 10
+        assert raft._Raft__last_included_term == 3
+
+
+class TestLeaderSendsPersistedSnapshot:
+    """Tests for B3: leader sends persisted snapshot, not live state."""
+
+    @pytest.mark.asyncio
+    async def test_replicate_uses_persisted_snapshot(self):
+        """Leader should use stored snapshot data, not live state machine snapshot."""
+        sm = KeyValueStateMachine()
+        storage = MemoryStorage()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        # Store a persisted snapshot at index 5
+        await storage.save_snapshot(5, 2, b"persisted-snapshot-data")
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(3)
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = []
+        await raft._initialize_leader_volatile_state()
+
+        # Set follower's nextIndex behind snapshot
+        raft._Raft__next_index["node-2"] = 3
+
+        # Apply more entries to state machine (making live state ahead of snapshot)
+        await sm.apply("SET extra 999")
+
+        await raft._replicate_to_peer("node-2")
+
+        # Verify install_snapshot was called with PERSISTED data, not live
+        mock_client.install_snapshot.assert_called_once()
+        call_kwargs = mock_client.install_snapshot.call_args
+        assert call_kwargs.kwargs["data"] == b"persisted-snapshot-data"
+        assert call_kwargs.kwargs["last_included_index"] == 5
+        assert call_kwargs.kwargs["last_included_term"] == 2
+
+    @pytest.mark.asyncio
+    async def test_replicate_falls_back_to_live_snapshot(self):
+        """When no persisted snapshot exists, fall back to live snapshot."""
+        sm = KeyValueStateMachine()
+        await sm.apply("SET k1 v1")
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(3)
+        raft._Raft__last_included_index = 5
+        raft._Raft__last_included_term = 2
+        raft._Raft__last_applied = 5
+        raft._Raft__log = []
+        await raft._initialize_leader_volatile_state()
+        raft._Raft__next_index["node-2"] = 3
+
+        await raft._replicate_to_peer("node-2")
+
+        # Should still call install_snapshot (with live data)
+        mock_client.install_snapshot.assert_called_once()
+
+
+class TestSnapshotBinarySerialization:
+    """Tests for B2: binary serialization of snapshot messages."""
+
+    def test_install_snapshot_request_roundtrip(self):
+        from aioraft.protos.raft_pb2 import InstallSnapshotRequest
+
+        req = InstallSnapshotRequest(
+            term=42,
+            leader_id="leader-node-1",
+            last_included_index=100,
+            last_included_term=10,
+            data=b"\x00\x01\x02\xff",
+        )
+        serialized = req.SerializeToString()
+        restored = InstallSnapshotRequest.FromString(serialized)
+
+        assert restored.term == 42
+        assert restored.leader_id == "leader-node-1"
+        assert restored.last_included_index == 100
+        assert restored.last_included_term == 10
+        assert restored.data == b"\x00\x01\x02\xff"
+
+    def test_install_snapshot_response_roundtrip(self):
+        from aioraft.protos.raft_pb2 import InstallSnapshotResponse
+
+        resp = InstallSnapshotResponse(term=7)
+        serialized = resp.SerializeToString()
+        restored = InstallSnapshotResponse.FromString(serialized)
+
+        assert restored.term == 7
+
+    def test_install_snapshot_request_empty_data(self):
+        from aioraft.protos.raft_pb2 import InstallSnapshotRequest
+
+        req = InstallSnapshotRequest(term=1, leader_id="", data=b"")
+        serialized = req.SerializeToString()
+        restored = InstallSnapshotRequest.FromString(serialized)
+
+        assert restored.term == 1
+        assert restored.leader_id == ""
+        assert restored.data == b""
+
+    def test_serialization_is_binary_not_json(self):
+        """Verify that serialized form is NOT JSON (B2 fix)."""
+        from aioraft.protos.raft_pb2 import InstallSnapshotRequest
+
+        req = InstallSnapshotRequest(term=1, leader_id="node", data=b"data")
+        serialized = req.SerializeToString()
+
+        # Should NOT be valid JSON
+        import json
+        with pytest.raises((json.JSONDecodeError, UnicodeDecodeError)):
+            json.loads(serialized)

@@ -85,6 +85,22 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         )
         return raft_pb2.RequestVoteResponse(term=term, vote_granted=vote_granted)
 
+    async def InstallSnapshot(
+        self,
+        request: raft_pb2.InstallSnapshotRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> raft_pb2.InstallSnapshotResponse:
+        if (protocol := self.__protocol) is None:
+            return raft_pb2.InstallSnapshotResponse(term=request.term)
+        (term,) = await protocol.on_install_snapshot(
+            term=request.term,
+            leader_id=RaftId(request.leader_id),
+            last_included_index=request.last_included_index,
+            last_included_term=request.last_included_term,
+            data=request.data,
+        )
+        return raft_pb2.InstallSnapshotResponse(term=term)
+
     async def ClientRequest(
         self,
         request: raft_pb2.ClientRequestMessage,

@@ -10,6 +10,26 @@ from aioraft.types import RaftId
 
 class AbstractRaftClient(abc.ABC):
     @abc.abstractmethod
+    async def install_snapshot(
+        self,
+        *,
+        to: str,
+        term: int,
+        leader_id: RaftId,
+        last_included_index: int,
+        last_included_term: int,
+        data: bytes,
+    ) -> Tuple[int]:
+        """Send InstallSnapshot RPC to a follower.
+
+        Returns
+        -------
+        :param int term: follower's currentTerm
+        -------
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def append_entries(
         self,
         *,
@@ -146,6 +166,39 @@ class GrpcRaftClient(AbstractRaftClient):
             except Exception:
                 raise
             return term, False
+
+    async def install_snapshot(
+        self,
+        *,
+        to: str,
+        term: int,
+        leader_id: RaftId,
+        last_included_index: int,
+        last_included_term: int,
+        data: bytes,
+        timeout: float = 5.0,
+    ) -> Tuple[int]:
+        request = raft_pb2.InstallSnapshotRequest(
+            term=term,
+            leader_id=leader_id,
+            last_included_index=last_included_index,
+            last_included_term=last_included_term,
+            data=data,
+        )
+        async with self.__create_channel(to) as channel:
+            stub = raft_pb2_grpc.RaftServiceStub(channel)
+            try:
+                response = await asyncio.wait_for(
+                    stub.InstallSnapshot(request), timeout=timeout
+                )
+                return (response.term,)
+            except grpc.aio.AioRpcError:
+                pass
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                raise
+            return (term,)
 
     def __create_channel(self, target: str) -> grpc.aio.Channel:
         if credentials := self.__credentials:

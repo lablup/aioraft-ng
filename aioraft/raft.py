@@ -53,6 +53,8 @@ class Raft(aobject, AbstractRaftProtocol):
       set commitIndex = N
     """
 
+    DEFAULT_SNAPSHOT_THRESHOLD: Final[int] = 1000
+
     def __init__(
         self,
         id_: RaftId,
@@ -62,6 +64,7 @@ class Raft(aobject, AbstractRaftProtocol):
         on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
         state_machine: Optional[StateMachine] = None,
         storage: Optional[Storage] = None,
+        snapshot_threshold: Optional[int] = None,
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
@@ -73,6 +76,9 @@ class Raft(aobject, AbstractRaftProtocol):
         ] = on_state_changed
         self.__state_machine: Optional[StateMachine] = state_machine
         self.__storage: Optional[Storage] = storage
+        self.__snapshot_threshold: int = (
+            snapshot_threshold if snapshot_threshold is not None else self.DEFAULT_SNAPSHOT_THRESHOLD
+        )
 
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
@@ -81,6 +87,10 @@ class Raft(aobject, AbstractRaftProtocol):
         self._vote_request_lock = asyncio.Lock()
 
         self.__leader_id: Optional[RaftId] = None
+
+        # Snapshot metadata
+        self.__last_included_index: int = 0
+        self.__last_included_term: int = 0
 
         server.bind(self)
 
@@ -91,6 +101,11 @@ class Raft(aobject, AbstractRaftProtocol):
             self.__current_term = AtomicInteger(term)
             self.__voted_for = await self.__storage.load_vote()
             self.__log = await self.__storage.load_logs()
+            # Restore snapshot metadata
+            snapshot = await self.__storage.load_snapshot()
+            if snapshot is not None:
+                self.__last_included_index = snapshot[0]
+                self.__last_included_term = snapshot[1]
         else:
             await self._initialize_persistent_state()
         await self._initialize_volatile_state()
@@ -166,7 +181,7 @@ class Raft(aobject, AbstractRaftProtocol):
             for each server, index of highest log entry known to be replicated on server
             (initialized to 0, increases monotonically)
         """
-        last_log_index = len(self.__log)
+        last_log_index = self.__last_included_index + len(self.__log)
         self.__next_index: Dict[RaftId, int] = {
             peer: last_log_index + 1 for peer in self.__configuration
         }
@@ -247,7 +262,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def _append_entry(self, command: str) -> raft_pb2.Log:
         """Append a new entry to the local log. Returns the created entry."""
-        index = len(self.__log) + 1
+        index = self.__last_included_index + len(self.__log) + 1
         entry = raft_pb2.Log(
             index=index,
             term=self.current_term,
@@ -260,19 +275,59 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def _replicate_to_peer(self, peer_id: RaftId) -> Tuple[int, bool]:
         """Send AppendEntries RPC to a single peer with entries from nextIndex onwards.
+        If the peer is behind the snapshot, send InstallSnapshot instead.
 
         Returns (term, success) from the peer's response.
         """
         next_idx = self.__next_index.get(peer_id, 1)
+
+        # If follower is behind snapshot, send InstallSnapshot
+        if next_idx <= self.__last_included_index:
+            # Prefer the persisted snapshot so metadata and data are consistent.
+            snapshot_data = None
+            snap_idx = self.__last_included_index
+            snap_term = self.__last_included_term
+            if self.__storage:
+                persisted = await self.__storage.load_snapshot()
+                if persisted is not None:
+                    snap_idx, snap_term, snapshot_data = persisted
+            # Fall back to a live snapshot with correct metadata when no
+            # persisted snapshot is available.
+            if snapshot_data is None and self.__state_machine:
+                snapshot_data = await self.__state_machine.snapshot()
+                snap_idx = self.__last_applied
+                entry = self._log_at_index(snap_idx)
+                snap_term = entry.term if entry else self.__last_included_term
+            if snapshot_data is None:
+                # Cannot send snapshot; let caller retry later.
+                return self.current_term, False
+            (resp_term,) = await self.__client.install_snapshot(
+                to=peer_id,
+                term=self.current_term,
+                leader_id=self.id,
+                last_included_index=snap_idx,
+                last_included_term=snap_term,
+                data=snapshot_data,
+            )
+            if resp_term > self.current_term:
+                return resp_term, False
+            self.__next_index[peer_id] = snap_idx + 1
+            self.__match_index[peer_id] = snap_idx
+            return resp_term, True
+
         prev_log_index = next_idx - 1
         prev_log_term = 0
         if prev_log_index > 0:
-            prev_entry = self._log_at_index(prev_log_index)
-            if prev_entry is not None:
-                prev_log_term = prev_entry.term
+            if prev_log_index == self.__last_included_index:
+                prev_log_term = self.__last_included_term
+            else:
+                prev_entry = self._log_at_index(prev_log_index)
+                if prev_entry is not None:
+                    prev_log_term = prev_entry.term
 
-        # Entries from nextIndex to end of log
-        entries = self.__log[next_idx - 1:] if next_idx - 1 < len(self.__log) else []
+        # Entries from nextIndex to end of log (adjusted for snapshot offset)
+        offset = next_idx - self.__last_included_index - 1
+        entries = self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
 
         term, success = await self.__client.append_entries(
             to=peer_id,
@@ -302,7 +357,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 return
             if success:
                 # Update nextIndex and matchIndex on success
-                last_log_index = len(self.__log)
+                last_log_index = self.__last_included_index + len(self.__log)
                 self.__next_index[peer_id] = last_log_index + 1
                 self.__match_index[peer_id] = last_log_index
             else:
@@ -320,7 +375,8 @@ class Raft(aobject, AbstractRaftProtocol):
         if not self.has_leadership():
             return
 
-        for n in range(len(self.__log), self.__commit_index, -1):
+        last_log_index = self.__last_included_index + len(self.__log)
+        for n in range(last_log_index, self.__commit_index, -1):
             entry = self._log_at_index(n)
             if entry is None or entry.term != self.current_term:
                 continue
@@ -400,9 +456,14 @@ class Raft(aobject, AbstractRaftProtocol):
         # Rule 2: Reply false if log doesn't contain an entry at prevLogIndex
         # whose term matches prevLogTerm
         if prev_log_index > 0:
-            prev_entry = self._log_at_index(prev_log_index)
-            if prev_entry is None or prev_entry.term != prev_log_term:
-                return (self.current_term, False)
+            if prev_log_index == self.__last_included_index:
+                # The entry is at the snapshot boundary
+                if prev_log_term != self.__last_included_term:
+                    return (self.current_term, False)
+            else:
+                prev_entry = self._log_at_index(prev_log_index)
+                if prev_entry is None or prev_entry.term != prev_log_term:
+                    return (self.current_term, False)
 
         # Process entries (rules 3 & 4)
         entries_list = list(entries)
@@ -431,7 +492,8 @@ class Raft(aobject, AbstractRaftProtocol):
         if truncate_from is not None:
             if self.__storage:
                 await self.__storage.truncate_and_append(truncate_from, new_entries_to_append)
-            self.__log = self.__log[:truncate_from - 1]
+            adjusted = truncate_from - self.__last_included_index - 1
+            self.__log = self.__log[:adjusted]
             self.__log.extend(new_entries_to_append)
         elif new_entries_to_append:
             if self.__storage:
@@ -503,6 +565,8 @@ class Raft(aobject, AbstractRaftProtocol):
                         await self.__state_machine.apply(entry.command)
                     except Exception as e:
                         log.error(f"Failed to apply entry {self.__last_applied}: {e}")
+            # Check if log compaction is needed after applying entries
+            await self._maybe_create_snapshot()
             self.__commit_event.clear()
             # Re-check after clearing to avoid race where a set() between
             # the end of the drain loop and clear() would be lost.
@@ -520,17 +584,94 @@ class Raft(aobject, AbstractRaftProtocol):
             self.__commit_index = n
             self.__commit_event.set()
 
+    async def _maybe_create_snapshot(self) -> None:
+        """Create a snapshot if the log has grown beyond the threshold."""
+        if len(self.__log) <= self.__snapshot_threshold:
+            return
+        if not self.__state_machine:
+            return
+        if self.__last_applied <= self.__last_included_index:
+            return
+
+        data = await self.__state_machine.snapshot()
+        last_index = self.__last_applied
+        last_entry = self._log_at_index(last_index)
+        if last_entry is None:
+            return
+        last_term = last_entry.term
+
+        # Discard compacted log entries
+        entries_to_discard = last_index - self.__last_included_index
+        remaining_logs = self.__log[entries_to_discard:]
+
+        if self.__storage:
+            await self.__storage.compact_log_with_snapshot(
+                last_index, last_term, data, remaining_logs,
+            )
+
+        self.__log = remaining_logs
+        self.__last_included_index = last_index
+        self.__last_included_term = last_term
+
+    async def on_install_snapshot(
+        self,
+        *,
+        term: int,
+        leader_id: RaftId,
+        last_included_index: int,
+        last_included_term: int,
+        data: bytes,
+    ) -> Tuple[int]:
+        """Handle InstallSnapshot RPC from the leader."""
+        if term < self.current_term:
+            return (self.current_term,)
+
+        # B4: Guard against stale/duplicate snapshots
+        if last_included_index <= self.__last_included_index:
+            return (self.current_term,)
+
+        await self.__synchronize_term(term)
+        await self.__reset_timeout()
+        self.__leader_id = leader_id
+
+        # Restore state machine
+        if self.__state_machine:
+            await self.__state_machine.restore(data)
+
+        # Discard entire log up to snapshot
+        remaining_logs = [e for e in self.__log if e.index > last_included_index]
+
+        # Persist atomically
+        if self.__storage:
+            await self.__storage.compact_log_with_snapshot(
+                last_included_index, last_included_term, data, remaining_logs,
+            )
+
+        self.__log = remaining_logs
+        self.__last_included_index = last_included_index
+        self.__last_included_term = last_included_term
+        self.__commit_index = max(self.__commit_index, last_included_index)
+        self.__last_applied = last_included_index
+
+        return (self.current_term,)
+
     def _get_last_log_info(self) -> Tuple[int, int]:
         """Return (last_log_index, last_log_term) for the local log."""
         if self.__log:
             last = self.__log[-1]
             return (last.index, last.term)
+        if self.__last_included_index > 0:
+            return (self.__last_included_index, self.__last_included_term)
         return (0, 0)
 
     def _log_at_index(self, index: int) -> Optional[raft_pb2.Log]:
-        """Return the log entry at the given 1-based index, or None."""
-        if 1 <= index <= len(self.__log):
-            return self.__log[index - 1]
+        """Return the log entry at the given 1-based index, or None.
+        Accounts for snapshot offset."""
+        if index <= self.__last_included_index:
+            return None
+        adjusted = index - self.__last_included_index - 1
+        if 0 <= adjusted < len(self.__log):
+            return self.__log[adjusted]
         return None
 
     @property

@@ -124,3 +124,79 @@ if _descriptor._USE_C_DESCRIPTORS == False:
     _RAFTSERVICE._serialized_start = 574
     _RAFTSERVICE._serialized_end = 773
 # @@protoc_insertion_point(module_scope)
+
+
+# -- Snapshot messages (added manually; no protoc re-generation) --
+# These use struct-based binary serialization compatible with gRPC's
+# SerializeToString / FromString contract (binary wire format).
+
+import struct as _struct
+
+
+class InstallSnapshotRequest:
+    """Binary-serializable message for InstallSnapshot RPC request.
+
+    Wire format (big-endian):
+        term              : uint64  (8 bytes)
+        leader_id_length  : uint32  (4 bytes)
+        leader_id         : bytes   (leader_id_length bytes, UTF-8)
+        last_included_index : uint64 (8 bytes)
+        last_included_term  : uint64 (8 bytes)
+        data              : bytes   (remaining bytes)
+    """
+
+    def __init__(self, term: int = 0, leader_id: str = "", last_included_index: int = 0,
+                 last_included_term: int = 0, data: bytes = b""):
+        self.term = term
+        self.leader_id = leader_id
+        self.last_included_index = last_included_index
+        self.last_included_term = last_included_term
+        self.data = data
+
+    def SerializeToString(self) -> bytes:
+        leader_bytes = self.leader_id.encode('utf-8')
+        header = _struct.pack(
+            f'!QI{len(leader_bytes)}sQQ',
+            self.term,
+            len(leader_bytes),
+            leader_bytes,
+            self.last_included_index,
+            self.last_included_term,
+        )
+        return header + self.data
+
+    @classmethod
+    def FromString(cls, raw: bytes) -> "InstallSnapshotRequest":
+        offset = 0
+        term = _struct.unpack_from('!Q', raw, offset)[0]; offset += 8
+        leader_len = _struct.unpack_from('!I', raw, offset)[0]; offset += 4
+        leader_id = raw[offset:offset + leader_len].decode('utf-8'); offset += leader_len
+        last_included_index = _struct.unpack_from('!Q', raw, offset)[0]; offset += 8
+        last_included_term = _struct.unpack_from('!Q', raw, offset)[0]; offset += 8
+        data = raw[offset:]
+        return cls(
+            term=term,
+            leader_id=leader_id,
+            last_included_index=last_included_index,
+            last_included_term=last_included_term,
+            data=data,
+        )
+
+
+class InstallSnapshotResponse:
+    """Binary-serializable message for InstallSnapshot RPC response.
+
+    Wire format (big-endian):
+        term : uint64 (8 bytes)
+    """
+
+    def __init__(self, term: int = 0):
+        self.term = term
+
+    def SerializeToString(self) -> bytes:
+        return _struct.pack('!Q', self.term)
+
+    @classmethod
+    def FromString(cls, raw: bytes) -> "InstallSnapshotResponse":
+        term = _struct.unpack_from('!Q', raw, 0)[0]
+        return cls(term=term)

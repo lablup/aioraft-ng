@@ -4,6 +4,7 @@ service RaftService {
     rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
     rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
     rpc ClientRequest(ClientRequestMessage) returns (ClientResponseMessage);
+    rpc InstallSnapshot(InstallSnapshotRequest) returns (InstallSnapshotResponse);
 }
 
 message AppendEntriesRequest {
@@ -47,4 +48,16 @@ message ClientResponseMessage {
     string result = 2;
     string leader_hint = 3;  // address of current leader if not leader
     string error = 4;
+}
+
+message InstallSnapshotRequest {
+    uint64 term = 1;
+    string leader_id = 2;
+    uint64 last_included_index = 3;
+    uint64 last_included_term = 4;
+    bytes data = 5;  // serialized snapshot of state machine
+}
+
+message InstallSnapshotResponse {
+    uint64 term = 1;
 }
