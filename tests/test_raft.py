@@ -196,9 +196,9 @@ async def test_valid_append_entries_resets_election_timer():
     assert success is True
 
     # The election timer should have been reset (elapsed_time back to 0.0)
-    assert raft._elapsed_time == pytest.approx(0.0), (
-        "Election timer was not reset by a valid AppendEntries RPC"
-    )
+    assert raft._elapsed_time == pytest.approx(
+        0.0
+    ), "Election timer was not reset by a valid AppendEntries RPC"
 
 
 class TestStateMachine:
@@ -474,7 +474,9 @@ class TestClientRequest:
 
         repl_task = asyncio.create_task(simulate_replication())
         try:
-            success, result, leader_hint = await raft.on_client_request("SET mykey myval")
+            success, result, leader_hint = await raft.on_client_request(
+                "SET mykey myval"
+            )
             assert success is True
             # on_client_request no longer applies inline; result is empty
             assert result == ""
@@ -506,7 +508,10 @@ class TestClientRequest:
 
         # Patch the timeout to be very short for test speed
         import unittest.mock as um
-        with um.patch("aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+
+        with um.patch(
+            "aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError
+        ):
             success, result, leader_hint = await raft.on_client_request("SET foo bar")
             assert success is False
             assert result == "lost leadership or timeout"
@@ -1217,11 +1222,13 @@ class TestTruncateAndAppend:
     @pytest.mark.asyncio
     async def test_memory_truncate_and_append(self):
         storage = MemoryStorage()
-        await storage.append_logs([
-            raft_pb2.Log(index=1, term=1, command="SET a 1"),
-            raft_pb2.Log(index=2, term=1, command="SET b 2"),
-            raft_pb2.Log(index=3, term=1, command="SET c 3"),
-        ])
+        await storage.append_logs(
+            [
+                raft_pb2.Log(index=1, term=1, command="SET a 1"),
+                raft_pb2.Log(index=2, term=1, command="SET b 2"),
+                raft_pb2.Log(index=3, term=1, command="SET c 3"),
+            ]
+        )
         new_entries = [raft_pb2.Log(index=2, term=2, command="SET b NEW")]
         await storage.truncate_and_append(2, new_entries)
         logs = await storage.load_logs()
@@ -1234,11 +1241,13 @@ class TestTruncateAndAppend:
         with tempfile.NamedTemporaryFile(suffix=".db") as f:
             storage = SQLiteStorage(db_path=f.name)
             await storage.initialize()
-            await storage.append_logs([
-                raft_pb2.Log(index=1, term=1, command="SET a 1"),
-                raft_pb2.Log(index=2, term=1, command="SET b 2"),
-                raft_pb2.Log(index=3, term=1, command="SET c 3"),
-            ])
+            await storage.append_logs(
+                [
+                    raft_pb2.Log(index=1, term=1, command="SET a 1"),
+                    raft_pb2.Log(index=2, term=1, command="SET b 2"),
+                    raft_pb2.Log(index=3, term=1, command="SET c 3"),
+                ]
+            )
             new_entries = [raft_pb2.Log(index=2, term=2, command="SET b NEW")]
             await storage.truncate_and_append(2, new_entries)
             logs = await storage.load_logs()
@@ -1504,6 +1513,7 @@ class TestSQLiteStorage:
         await storage2.close()
 
         import os
+
         os.unlink(db_path)
 
 
@@ -1606,10 +1616,12 @@ class TestRaftWithStorage:
         storage = MemoryStorage()
         await storage.save_term(10)
         await storage.save_vote("node-3")
-        await storage.append_logs([
-            raft_pb2.Log(index=1, term=8, command="SET a 1"),
-            raft_pb2.Log(index=2, term=10, command="SET b 2"),
-        ])
+        await storage.append_logs(
+            [
+                raft_pb2.Log(index=1, term=8, command="SET a 1"),
+                raft_pb2.Log(index=2, term=10, command="SET b 2"),
+            ]
+        )
 
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
@@ -1878,8 +1890,7 @@ class TestLogCompaction:
         )
 
         raft._Raft__log = [
-            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}")
-            for i in range(1, 6)
+            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}") for i in range(1, 6)
         ]
         raft._Raft__last_applied = 5
         raft._Raft__commit_index = 5
@@ -1911,6 +1922,7 @@ class TestInstallSnapshot:
 
         # Create snapshot data
         import json
+
         snapshot_data = json.dumps({"a": "1", "b": "2"}).encode("utf-8")
 
         (resp_term,) = await raft.on_install_snapshot(
@@ -1980,6 +1992,7 @@ class TestInstallSnapshot:
         ]
 
         import json
+
         snapshot_data = json.dumps({"x": "10"}).encode("utf-8")
 
         await raft.on_install_snapshot(
@@ -2088,6 +2101,7 @@ class TestSnapshotStorage:
         )
 
         import json
+
         snapshot_data = json.dumps({"key": "val"}).encode("utf-8")
 
         await raft.on_install_snapshot(
@@ -2186,6 +2200,7 @@ class TestStaleSnapshotGuard:
         raft._Raft__current_term.set(5)
 
         import json
+
         old_data = json.dumps({"old": "data"}).encode("utf-8")
 
         # Try to install a snapshot at index 8 (older)
@@ -2253,6 +2268,7 @@ class TestStaleSnapshotGuard:
         raft._Raft__current_term.set(3)
 
         import json
+
         snapshot_data = json.dumps({"new": "state"}).encode("utf-8")
 
         (resp_term,) = await raft.on_install_snapshot(
@@ -2399,6 +2415,7 @@ class TestSnapshotBinarySerialization:
 
         # Should NOT be valid JSON
         import json
+
         with pytest.raises((json.JSONDecodeError, UnicodeDecodeError)):
             json.loads(serialized)
 
@@ -2521,6 +2538,7 @@ class TestMembershipChanges:
 
         # Manually inject an uncommitted config change entry
         from aioraft.types import CONF_CHANGE_ADD
+
         raft._Raft__log.append(
             raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
         )
@@ -2534,6 +2552,7 @@ class TestMembershipChanges:
     async def test_config_change_entries_not_applied_to_state_machine(self):
         """Config change entries should be skipped by the state machine apply loop."""
         from aioraft.types import CONF_CHANGE_ADD
+
         sm = KeyValueStateMachine()
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
@@ -2571,6 +2590,7 @@ class TestMembershipChanges:
     async def test_followers_apply_config_changes_on_append_entries(self):
         """Followers should update their configuration when receiving config change entries."""
         from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE
+
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
         mock_client = AsyncMock()
@@ -2598,7 +2618,9 @@ class TestMembershipChanges:
         assert "node-4" in raft.configuration
 
         # Simulate receiving a config remove entry
-        remove_entry = raft_pb2.Log(index=2, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3")
+        remove_entry = raft_pb2.Log(
+            index=2, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3"
+        )
         term, success = await raft.on_append_entries(
             term=1,
             leader_id="leader",
@@ -2614,6 +2636,7 @@ class TestMembershipChanges:
     async def test_has_pending_config_change_detection(self):
         """_has_pending_config_change should detect uncommitted config entries."""
         from aioraft.types import CONF_CHANGE_ADD
+
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
         mock_client = AsyncMock()
@@ -2807,7 +2830,9 @@ class TestMembershipChanges:
         async def tracking_append(cmd):
             # At the point of appending, node-4 should already be in config
             call_order.append(
-                "config_has_node4" if "node-4" in raft._Raft__configuration else "config_missing_node4"
+                "config_has_node4"
+                if "node-4" in raft._Raft__configuration
+                else "config_missing_node4"
             )
             return await original_append(cmd)
 
@@ -2851,9 +2876,7 @@ class TestMembershipChanges:
 
         async def tracking_wait(index):
             # Check that replication state still exists for node-2 during wait
-            had_repl_state_during_wait.append(
-                "node-2" in raft._Raft__next_index
-            )
+            had_repl_state_during_wait.append("node-2" in raft._Raft__next_index)
             # Simulate commit
             raft._update_commit_index(index)
 
@@ -3003,7 +3026,10 @@ class TestMembershipChanges:
         # Normal commands should still work (will timeout but not be rejected)
         # Just verify it doesn't get the "reserved prefix" error
         import unittest.mock as um
-        with um.patch("aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+
+        with um.patch(
+            "aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError
+        ):
             success, result, hint = await raft.on_client_request("SET foo bar")
             assert "reserved prefix" not in result
 
@@ -3042,6 +3068,7 @@ class TestMembershipChanges:
         # The config change entry should exist in the log
         assert len(raft._Raft__log) == 1
         from aioraft.types import CONF_CHANGE_REMOVE
+
         assert raft._Raft__log[0].command == f"{CONF_CHANGE_REMOVE}:leader-1"
 
     @pytest.mark.asyncio
@@ -3072,6 +3099,7 @@ class TestMembershipChanges:
         """B3: When a follower receives config change entries via AppendEntries,
         the configuration should be persisted to storage."""
         from aioraft.types import CONF_CHANGE_ADD
+
         storage = MemoryStorage()
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
