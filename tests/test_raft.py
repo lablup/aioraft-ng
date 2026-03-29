@@ -16,9 +16,9 @@ from aioraft.types import RaftState
 
 async def wait_until(pred, timeout=1.0):
     """Poll *pred* until it returns True, or raise TimeoutError."""
-    deadline = asyncio.get_event_loop().time() + timeout
+    deadline = asyncio.get_running_loop().time() + timeout
     while not pred():
-        if asyncio.get_event_loop().time() > deadline:
+        if asyncio.get_running_loop().time() > deadline:
             raise TimeoutError("wait_until timed out")
         await asyncio.sleep(0.001)
 
@@ -568,7 +568,7 @@ class TestLogReplication:
         raft._Raft__next_index = {"node-2": 2}
         raft._Raft__match_index = {"node-2": 1}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
         assert success is True
 
         # Verify the call
@@ -598,7 +598,9 @@ class TestLogReplication:
         raft._Raft__log = [
             raft_pb2.Log(index=1, term=1, command="SET a 1"),
         ]
-        await raft._initialize_leader_volatile_state()
+        # Set nextIndex=1 so peers need to replicate the entry
+        raft._Raft__next_index = {"node-2": 1, "node-3": 1}
+        raft._Raft__match_index = {"node-2": 0, "node-3": 0}
 
         await raft._publish_heartbeat()
 
@@ -3576,7 +3578,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 10}
         raft._Raft__match_index = {"node-2": 0}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         mock_client.install_snapshot.assert_called_once()
@@ -3616,7 +3618,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 11}
         raft._Raft__match_index = {"node-2": 0}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         mock_client.install_snapshot.assert_not_called()
@@ -3652,7 +3654,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 15}
         raft._Raft__match_index = {"node-2": 14}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         call_kwargs = mock_client.append_entries.call_args[1]
@@ -3689,7 +3691,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 11}
         raft._Raft__match_index = {"node-2": 10}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         call_kwargs = mock_client.append_entries.call_args[1]
@@ -3731,7 +3733,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 5}
         raft._Raft__match_index = {"node-2": 0}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         mock_client.install_snapshot.assert_called_once()
@@ -3772,7 +3774,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 5}
         raft._Raft__match_index = {"node-2": 0}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert term == 5
         assert success is False
@@ -3812,7 +3814,7 @@ class TestReplicateToSnapshotEdgeCases:
         raft._Raft__next_index = {"node-2": 1}
         raft._Raft__match_index = {"node-2": 0}
 
-        term, success = await raft._replicate_to_peer("node-2")
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
 
         assert success is True
         mock_client.install_snapshot.assert_called_once()
@@ -4269,3 +4271,462 @@ async def test_start_pre_vote_ignores_equal_or_lower_terms():
     assert result is True
     # Term should remain unchanged
     assert raft.current_term == 3
+
+
+class TestLeaderLease:
+    """Tests for leader lease-based reads."""
+
+    @pytest.mark.asyncio
+    async def test_has_valid_lease_true_when_recent_ack(self):
+        """_has_valid_lease returns True when a recent heartbeat ack exists."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+
+        assert raft._has_valid_lease() is True
+
+    @pytest.mark.asyncio
+    async def test_has_valid_lease_false_when_stale_ack(self):
+        """_has_valid_lease returns False when ack is stale."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        # Set ack to a time well in the past (beyond 0.15s threshold)
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time() - 1.0
+
+        assert raft._has_valid_lease() is False
+
+    @pytest.mark.asyncio
+    async def test_has_valid_lease_false_when_not_leader(self):
+        """_has_valid_lease returns False when not leader."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Node is a follower by default
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+
+        assert raft._has_valid_lease() is False
+
+    @pytest.mark.asyncio
+    async def test_on_read_request_serves_read_with_valid_lease(self):
+        """on_read_request serves read from state machine with valid lease."""
+        sm = KeyValueStateMachine()
+        sm._store = {"foo": "bar"}
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            state_machine=sm,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+
+        success, result, leader_hint = await raft.on_read_request("GET foo")
+        assert success is True
+        assert result == "bar"
+        assert leader_hint is None
+
+    @pytest.mark.asyncio
+    async def test_on_read_request_redirects_when_not_leader(self):
+        """on_read_request redirects when not leader."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__leader_id = "node-2"
+
+        success, result, leader_hint = await raft.on_read_request("GET foo")
+        assert success is False
+        assert leader_hint == "node-2"
+
+    @pytest.mark.asyncio
+    async def test_on_read_request_returns_error_when_lease_expired(self):
+        """on_read_request returns lease expired error instead of writing to log."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+        # Set stale ack
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time() - 1.0
+
+        success, result, leader_hint = await raft.on_read_request("GET foo")
+        assert success is False
+        assert "lease expired" in result
+
+    @pytest.mark.asyncio
+    async def test_on_read_request_returns_empty_for_missing_key(self):
+        """on_read_request returns empty string for missing key with valid lease."""
+        sm = KeyValueStateMachine()
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            state_machine=sm,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+
+        success, result, leader_hint = await raft.on_read_request("GET missing")
+        assert success is True
+        assert result == ""  # None is converted to ""
+
+
+class TestLeaseInvalidationOnStepDown:
+    """Tests for lease invalidation when stepping down from leader."""
+
+    @pytest.mark.asyncio
+    async def test_lease_invalidated_on_step_down_to_follower(self):
+        """Lease should be invalidated when leader steps down to follower."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+        assert raft._has_valid_lease() is True
+
+        # Simulate step-down via synchronize_term (higher term discovered)
+        raft._Raft__current_term.set(1)
+        await raft._Raft__synchronize_term(2)
+
+        # Lease should be invalidated
+        assert raft._Raft__last_heartbeat_ack == 0.0
+        assert raft._has_valid_lease() is False
+
+    @pytest.mark.asyncio
+    async def test_stale_lease_not_carried_across_terms(self):
+        """A node that loses and regains leadership should not have a stale lease."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__last_heartbeat_ack = asyncio.get_running_loop().time()
+
+        # Step down
+        await raft._Raft__change_state(RaftState.FOLLOWER)
+        assert raft._Raft__last_heartbeat_ack == 0.0
+
+        # Become leader again
+        await raft._Raft__change_state(RaftState.LEADER)
+        # Lease should still be invalid (no new ack yet)
+        assert raft._has_valid_lease() is False
+
+
+class TestStateMachineQueryDefault:
+    """Tests for the base StateMachine.query default behavior."""
+
+    @pytest.mark.asyncio
+    async def test_base_query_raises_not_implemented(self):
+        """Base StateMachine.query should raise NotImplementedError."""
+        from aioraft.state_machine import StateMachine
+
+        class MinimalSM(StateMachine):
+            async def apply(self, command: str):
+                return "applied"
+
+            async def snapshot(self) -> bytes:
+                return b""
+
+            async def restore(self, data: bytes) -> None:
+                pass
+
+        sm = MinimalSM()
+        with pytest.raises(NotImplementedError, match="query\\(\\) must be implemented"):
+            await sm.query("GET key")
+
+
+class TestKeyValueStateMachineQuery:
+    """Tests for KeyValueStateMachine.query read-only method."""
+
+    @pytest.mark.asyncio
+    async def test_query_get(self):
+        sm = KeyValueStateMachine()
+        sm._store = {"key": "value"}
+        result = await sm.query("GET key")
+        assert result == "value"
+
+    @pytest.mark.asyncio
+    async def test_query_rejects_set(self):
+        sm = KeyValueStateMachine()
+        with pytest.raises(ValueError, match="Read-only query does not support"):
+            await sm.query("SET key value")
+
+    @pytest.mark.asyncio
+    async def test_query_rejects_delete(self):
+        sm = KeyValueStateMachine()
+        with pytest.raises(ValueError, match="Read-only query does not support"):
+            await sm.query("DELETE key")
+
+    @pytest.mark.asyncio
+    async def test_query_get_missing_key(self):
+        sm = KeyValueStateMachine()
+        result = await sm.query("GET missing")
+        assert result is None
+
+
+class TestBatchedReplication:
+    """Tests for batched replication."""
+
+    @pytest.mark.asyncio
+    async def test_replication_respects_max_batch_size(self):
+        """_replicate_to_peer should limit entries to MAX_ENTRIES_PER_BATCH."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        # Create a log larger than MAX_ENTRIES_PER_BATCH
+        num_entries = raft.MAX_ENTRIES_PER_BATCH + 50
+        raft._Raft__log = [raft_pb2.Log(index=i + 1, term=1, command=f"SET k{i} v{i}") for i in range(num_entries)]
+        raft._Raft__next_index = {"node-2": 1}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
+        assert success is True
+
+        call_kwargs = mock_client.append_entries.call_args[1]
+        assert len(call_kwargs["entries"]) == raft.MAX_ENTRIES_PER_BATCH
+
+    @pytest.mark.asyncio
+    async def test_large_log_replication_sends_in_chunks(self):
+        """Multiple rounds of replication should send the full log in chunks."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        num_entries = raft.MAX_ENTRIES_PER_BATCH + 50
+        raft._Raft__log = [raft_pb2.Log(index=i + 1, term=1, command=f"SET k{i} v{i}") for i in range(num_entries)]
+        raft._Raft__next_index = {"node-2": 1}
+        raft._Raft__match_index = {"node-2": 0}
+
+        # First batch: entries 1..100
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
+        assert success is True
+        call_kwargs = mock_client.append_entries.call_args[1]
+        assert len(call_kwargs["entries"]) == raft.MAX_ENTRIES_PER_BATCH
+
+        # Simulate leader processing success: advance nextIndex
+        raft._Raft__next_index["node-2"] = raft.MAX_ENTRIES_PER_BATCH + 1
+
+        # Second batch: remaining entries
+        term, success, _last_sent = await raft._replicate_to_peer("node-2")
+        assert success is True
+        call_kwargs = mock_client.append_entries.call_args[1]
+        assert len(call_kwargs["entries"]) == 50
+
+    @pytest.mark.asyncio
+    async def test_replicate_and_process_updates_indices(self):
+        """_replicate_and_process correctly updates nextIndex/matchIndex."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+        ]
+        raft._Raft__next_index = {"node-2": 1}
+        raft._Raft__match_index = {"node-2": 0}
+        raft._Raft__commit_index = 0
+        raft._Raft__replication_in_flight = {"node-2": True}
+
+        peer_id, term, success = await raft._replicate_and_process("node-2")
+
+        assert peer_id == "node-2"
+        assert success is True
+        assert raft._Raft__next_index["node-2"] == 3
+        assert raft._Raft__match_index["node-2"] == 2
+        # In-flight flag should be cleared
+        assert raft._Raft__replication_in_flight["node-2"] is False
+
+    @pytest.mark.asyncio
+    async def test_replicate_and_process_advances_only_to_batch_end(self):
+        """_replicate_and_process must advance indices to end of batch, not end of log."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        num_entries = raft.MAX_ENTRIES_PER_BATCH + 50
+        raft._Raft__log = [raft_pb2.Log(index=i + 1, term=1, command=f"SET k{i} v{i}") for i in range(num_entries)]
+        raft._Raft__next_index = {"node-2": 1}
+        raft._Raft__match_index = {"node-2": 0}
+        raft._Raft__commit_index = 0
+        raft._Raft__replication_in_flight = {"node-2": True}
+
+        peer_id, term, success = await raft._replicate_and_process("node-2")
+
+        assert success is True
+        # Should advance to end of batch (100), NOT end of log (150)
+        assert raft._Raft__next_index["node-2"] == raft.MAX_ENTRIES_PER_BATCH + 1
+        assert raft._Raft__match_index["node-2"] == raft.MAX_ENTRIES_PER_BATCH
+
+    @pytest.mark.asyncio
+    async def test_replicate_and_process_decrements_on_failure(self):
+        """_replicate_and_process decrements nextIndex on failure."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, False))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+        ]
+        raft._Raft__next_index = {"node-2": 2}
+        raft._Raft__match_index = {"node-2": 0}
+        raft._Raft__commit_index = 0
+        raft._Raft__replication_in_flight = {"node-2": True}
+
+        peer_id, term, success = await raft._replicate_and_process("node-2")
+
+        assert success is False
+        assert raft._Raft__next_index["node-2"] == 1
+        assert raft._Raft__replication_in_flight["node-2"] is False
+
+    @pytest.mark.asyncio
+    async def test_publish_heartbeat_records_lease_on_majority_ack(self):
+        """_publish_heartbeat should record heartbeat ack when majority responds."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = []
+        await raft._initialize_leader_volatile_state()
+
+        assert raft._Raft__last_heartbeat_ack == 0.0
+
+        await raft._publish_heartbeat()
+
+        # Both peers responded successfully, so lease should be recorded
+        assert raft._Raft__last_heartbeat_ack > 0.0
+        assert raft._has_valid_lease() is True

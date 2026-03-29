@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import json
 import logging
@@ -59,6 +60,8 @@ class Raft(aobject, AbstractRaftProtocol):
     """
 
     DEFAULT_SNAPSHOT_THRESHOLD: Final[int] = 1000
+    MAX_ENTRIES_PER_BATCH: Final[int] = 100
+    MIN_ELECTION_TIMEOUT: Final[float] = 0.15
 
     def __init__(
         self,
@@ -85,6 +88,8 @@ class Raft(aobject, AbstractRaftProtocol):
 
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
+        self.__last_heartbeat_ack: float = 0.0
+        self.__replication_in_flight: dict[RaftId, bool] = {}
 
         self.__vote_lock = asyncio.Lock()
         self._vote_request_lock = asyncio.Lock()
@@ -205,7 +210,7 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__match_index: dict[RaftId, int] = {peer: 0 for peer in self.__configuration}
 
     async def _reset_election_timeout(self) -> None:
-        self.__election_timeout: float = randrangef(0.15, 0.3)
+        self.__election_timeout: float = randrangef(self.MIN_ELECTION_TIMEOUT, 0.3)
 
     async def __reset_timeout(self) -> None:
         self.__heartbeat_event.set()
@@ -238,6 +243,8 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
+        if self.__state is RaftState.LEADER and next_state is not RaftState.LEADER:
+            self.__last_heartbeat_ack = 0.0  # invalidate lease on step-down
         log.info("State change %s: %s -> %s", self.__id, self.__state.name, next_state.name)
         self.__state = next_state
         if callback := self.__on_state_changed:
@@ -337,11 +344,12 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__log.append(entry)
         return entry
 
-    async def _replicate_to_peer(self, peer_id: RaftId) -> tuple[int, bool]:
+    async def _replicate_to_peer(self, peer_id: RaftId) -> tuple[int, bool, int]:
         """Send AppendEntries RPC to a single peer with entries from nextIndex onwards.
         If the peer is behind the snapshot, send InstallSnapshot instead.
 
-        Returns (term, success) from the peer's response.
+        Returns (term, success, last_sent_index) from the peer's response.
+        last_sent_index is the index of the last entry sent, or 0 if no entries were sent.
         """
         next_idx = self.__next_index.get(peer_id, 1)
 
@@ -366,7 +374,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 snap_term = entry.term if entry else self.__last_included_term
             if snapshot_data is None:
                 # Cannot send snapshot; let caller retry later.
-                return self.current_term, False
+                return self.current_term, False, 0
             (resp_term,) = await self.__client.install_snapshot(
                 to=peer_id,
                 term=self.current_term,
@@ -376,10 +384,10 @@ class Raft(aobject, AbstractRaftProtocol):
                 data=snapshot_data,
             )
             if resp_term > self.current_term:
-                return resp_term, False
+                return resp_term, False, 0
             self.__next_index[peer_id] = snap_idx + 1
             self.__match_index[peer_id] = snap_idx
-            return resp_term, True
+            return resp_term, True, snap_idx
 
         prev_log_index = next_idx - 1
         prev_log_term = 0
@@ -393,7 +401,10 @@ class Raft(aobject, AbstractRaftProtocol):
 
         # Entries from nextIndex to end of log (adjusted for snapshot offset)
         offset = next_idx - self.__last_included_index - 1
-        entries = self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
+        if offset >= 0 and offset < len(self.__log):
+            entries = self.__log[offset : offset + self.MAX_ENTRIES_PER_BATCH]
+        else:
+            entries = []
 
         term, success = await self.__client.append_entries(
             to=peer_id,
@@ -404,30 +415,52 @@ class Raft(aobject, AbstractRaftProtocol):
             entries=entries,
             leader_commit=self.__commit_index,
         )
-        return term, success
+        last_sent_index = entries[-1].index if entries else 0
+        return term, success, last_sent_index
+
+    async def _replicate_and_process(self, peer_id: RaftId) -> tuple[RaftId, int, bool]:
+        """Replicate to a peer and process the response."""
+        try:
+            term, success, last_sent_index = await self._replicate_to_peer(peer_id)
+            if term > self.current_term:
+                await self.__synchronize_term(term)
+                return (peer_id, term, False)
+            if success:
+                if last_sent_index > 0:
+                    self.__next_index[peer_id] = last_sent_index + 1
+                    self.__match_index[peer_id] = last_sent_index
+                # If last_sent_index == 0, it was a heartbeat with no entries; don't change indices
+            else:
+                current_next = self.__next_index.get(peer_id, 1)
+                if current_next > 1:
+                    self.__next_index[peer_id] = current_next - 1
+            return (peer_id, term, success)
+        finally:
+            self.__replication_in_flight[peer_id] = False
 
     async def _publish_heartbeat(self) -> None:
         if not self.has_leadership():
             return
 
-        results = await asyncio.gather(
-            *[asyncio.create_task(self._replicate_to_peer(server)) for server in self.__configuration]
-        )
+        peers = list(self.__configuration)
+        tasks = []
+        for peer in peers:
+            if not self.__replication_in_flight.get(peer, False):
+                self.__replication_in_flight[peer] = True
+                tasks.append(asyncio.create_task(self._replicate_and_process(peer)))
 
-        for peer_id, (term, success) in zip(self.__configuration, results, strict=False):
-            if term > self.current_term:
-                await self.__synchronize_term(term)
-                return
-            if success:
-                # Update nextIndex and matchIndex on success
-                last_log_index = self.__last_included_index + len(self.__log)
-                self.__next_index[peer_id] = last_log_index + 1
-                self.__match_index[peer_id] = last_log_index
-            else:
-                # Decrement nextIndex on failure (log inconsistency)
-                current_next = self.__next_index.get(peer_id, 1)
-                if current_next > 1:
-                    self.__next_index[peer_id] = current_next - 1
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            successful = 0
+            for result in results:
+                if isinstance(result, tuple) and len(result) == 3:
+                    _, _, success = result
+                    if success:
+                        successful += 1
+
+            if successful + 1 >= self.quorum:  # +1 for self
+                self.__last_heartbeat_ack = asyncio.get_running_loop().time()
 
         # After processing all responses, check if we can advance commitIndex
         self._update_leader_commit_index()
@@ -576,6 +609,18 @@ class Raft(aobject, AbstractRaftProtocol):
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
 
+    def _has_valid_lease(self) -> bool:
+        """Check if the leader lease is still valid.
+
+        A leader that has received acknowledgments from a majority within
+        the election timeout can serve reads without going through the log.
+        """
+        if not self.has_leadership():
+            return False
+        elapsed = asyncio.get_running_loop().time() - self.__last_heartbeat_ack
+        # Lease is valid if within the minimum election timeout
+        return elapsed < self.MIN_ELECTION_TIMEOUT
+
     """
     AbstractRaftProtocol
     """
@@ -605,6 +650,28 @@ class Raft(aobject, AbstractRaftProtocol):
         # The background _apply_committed_entries loop handles applying to
         # the state machine, so we don't apply inline (avoids double-apply).
         return (True, "", None)
+
+    async def on_read_request(self, query: str) -> tuple[bool, str, str | None]:
+        """Handle a read-only query. Uses leader lease if valid, otherwise redirects."""
+        if not self.has_leadership():
+            return (False, "", self.__leader_id)
+        if not self._has_valid_lease():
+            # Lease expired; ask client to retry instead of polluting the log
+            return (False, "lease expired, retry", None)
+        if not self.__state_machine:
+            return (False, "no state machine", None)
+        # Wait for state machine to be up-to-date before serving read
+        while self.__last_applied < self.__commit_index:
+            self.__commit_event.clear()
+            if self.__last_applied >= self.__commit_index:
+                break
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self.__commit_event.wait(), timeout=0.5)
+        try:
+            result = await self.__state_machine.query(query)
+            return (True, str(result) if result is not None else "", None)
+        except Exception as e:
+            return (False, str(e), None)
 
     async def on_append_entries(
         self,

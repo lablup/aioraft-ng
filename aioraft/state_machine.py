@@ -9,6 +9,10 @@ class StateMachine(abc.ABC):
         """Apply a committed log entry. Returns the result."""
         ...
 
+    async def query(self, command: str) -> Any:
+        """Read-only query. Must be overridden for read support."""
+        raise NotImplementedError("query() must be implemented for read-only operations")
+
     @abc.abstractmethod
     async def snapshot(self) -> bytes:
         """Serialize current state to bytes."""
@@ -38,6 +42,13 @@ class KeyValueStateMachine(StateMachine):
             return self._store.pop(parts[1], None)
         else:
             raise ValueError(f"Unknown command: {command}")
+
+    async def query(self, command: str) -> Any:
+        """Read-only query against current state. Only supports GET."""
+        parts = command.split(maxsplit=1)
+        if parts[0].upper() == "GET" and len(parts) == 2:
+            return self._store.get(parts[1])
+        raise ValueError(f"Read-only query does not support: {command}")
 
     async def snapshot(self) -> bytes:
         """Serialize current state to bytes using JSON."""
