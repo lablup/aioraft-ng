@@ -201,6 +201,39 @@ async def test_valid_append_entries_resets_election_timer():
     ), "Heartbeat event was not set by a valid AppendEntries RPC"
 
 
+@pytest.mark.asyncio
+async def test_vote_grant_resets_election_timer():
+    """Verify that granting a vote sets the heartbeat event."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+
+    raft._Raft__current_term.set(1)
+
+    # Clear the heartbeat event so we can observe whether it gets set
+    raft._Raft__heartbeat_event.clear()
+
+    # Request vote with a higher term — should be granted
+    term, granted = await raft.on_request_vote(
+        term=2,
+        candidate_id="candidate-1",
+        last_log_index=0,
+        last_log_term=0,
+    )
+
+    assert granted is True
+    assert (
+        raft._heartbeat_event.is_set()
+    ), "Heartbeat event was not set when granting a vote"
+
+
 class TestStateMachine:
     """Tests for KeyValueStateMachine SET/GET/DELETE operations."""
 
