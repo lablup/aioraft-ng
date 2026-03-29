@@ -94,7 +94,6 @@ class Raft(aobject, AbstractRaftProtocol):
                     while self.__state is RaftState.CANDIDATE:
                         await self._start_election()
                         await self._reset_election_timeout()
-                        await self._initialize_volatile_state()
                         if self.has_leadership():
                             await self._initialize_leader_volatile_state()
                             break
@@ -257,9 +256,9 @@ class Raft(aobject, AbstractRaftProtocol):
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
     ) -> Tuple[int, bool]:
-        await self.__reset_timeout()
         if term < (current_term := self.current_term):
             return (current_term, False)
+        await self.__reset_timeout()
         await self.__synchronize_term(term)
         return (self.current_term, True)
 
@@ -303,6 +302,18 @@ class Raft(aobject, AbstractRaftProtocol):
     @property
     def voted_for(self) -> Optional[RaftId]:
         return self.__voted_for
+
+    @property
+    def commit_index(self) -> int:
+        return self.__commit_index
+
+    @property
+    def state(self) -> RaftState:
+        return self.__state
+
+    @property
+    def elapsed_time(self) -> float:
+        return self.__elapsed_time
 
     @property
     def membership(self) -> int:
