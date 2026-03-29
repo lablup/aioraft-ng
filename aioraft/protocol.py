@@ -88,6 +88,38 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def on_pre_vote(
+        self,
+        *,
+        term: int,
+        candidate_id: RaftId,
+        last_log_index: int,
+        last_log_term: int,
+    ) -> tuple[int, bool]:
+        """PreVote RPC handler (Raft dissertation section 9.6).
+
+        Same parameters as RequestVote but the receiver must NOT:
+        - Update its own term
+        - Record a vote (votedFor)
+        - Reset its election timer
+
+        It simply answers whether it *would* vote for the candidate.
+
+        Arguments
+        ---------
+        :param int term: candidate's prospective term (currentTerm + 1)
+        :param RaftId candidate_id: candidate requesting the pre-vote
+        :param int last_log_index: index of candidate's last log entry
+        :param int last_log_term: term of candidate's last log entry
+
+        Returns
+        -------
+        :param int term: receiver's currentTerm
+        :param bool vote_granted: True if the receiver would vote for the candidate
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def on_install_snapshot(
         self,
         *,

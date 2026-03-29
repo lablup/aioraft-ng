@@ -95,6 +95,35 @@ class AbstractRaftClient(abc.ABC):
         """
         raise NotImplementedError()
 
+    @abc.abstractmethod
+    async def pre_vote(
+        self,
+        *,
+        to: str,
+        term: int,
+        candidate_id: RaftId,
+        last_log_index: int,
+        last_log_term: int,
+    ) -> tuple[int, bool]:
+        """Send PreVote RPC to a peer (Raft dissertation section 9.6).
+
+        Uses the same request/response format as RequestVote.
+
+        Arguments
+        ---------
+        :param str to: peer's address
+        :param int term: candidate's prospective term (currentTerm + 1)
+        :param RaftId candidate_id: candidate requesting the pre-vote
+        :param int last_log_index: index of candidate's last log entry
+        :param int last_log_term: term of candidate's last log entry
+
+        Returns
+        -------
+        :param int term: peer's currentTerm
+        :param bool vote_granted: True if the peer would vote for the candidate
+        """
+        raise NotImplementedError()
+
     async def close(self) -> None:
         """Close any resources held by the client. Default is a no-op."""
 
@@ -242,3 +271,37 @@ class GrpcRaftClient(AbstractRaftClient):
                 raise
             break
         return (term,)
+
+    async def pre_vote(
+        self,
+        *,
+        to: str,
+        term: int,
+        candidate_id: RaftId,
+        last_log_index: int,
+        last_log_term: int,
+        timeout: float = 5.0,
+    ) -> tuple[int, bool]:
+        request = raft_pb2.RequestVoteRequest(
+            term=term,
+            candidate_id=candidate_id,
+            last_log_index=last_log_index,
+            last_log_term=last_log_term,
+        )
+        for attempt in range(2):
+            channel = self._get_channel(to)
+            stub = raft_pb2_grpc.RaftServiceStub(channel)
+            try:
+                response = await asyncio.wait_for(stub.PreVote(request), timeout=timeout)
+                return response.term, response.vote_granted
+            except grpc.aio.AioRpcError:
+                if attempt == 0:
+                    log.debug("Connection error to %s, retrying with fresh channel", to)
+                    self._invalidate_channel(to)
+                    continue
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                raise
+            break
+        return term, False

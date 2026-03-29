@@ -85,6 +85,21 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         )
         return raft_pb2.RequestVoteResponse(term=term, vote_granted=vote_granted)
 
+    async def PreVote(
+        self,
+        request: raft_pb2.RequestVoteRequest,
+        context: grpc.aio.ServicerContext,
+    ) -> raft_pb2.RequestVoteResponse:
+        if (protocol := self.__protocol) is None:
+            return raft_pb2.RequestVoteResponse(term=request.term, vote_granted=False)
+        term, vote_granted = await protocol.on_pre_vote(
+            term=request.term,
+            candidate_id=RaftId(request.candidate_id),
+            last_log_index=request.last_log_index,
+            last_log_term=request.last_log_term,
+        )
+        return raft_pb2.RequestVoteResponse(term=term, vote_granted=vote_granted)
+
     async def InstallSnapshot(
         self,
         request: raft_pb2.InstallSnapshotRequest,
