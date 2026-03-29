@@ -13,6 +13,7 @@ Usage:
 """
 
 import asyncio
+import traceback
 from contextlib import suppress
 
 from aioraft import KeyValueStateMachine, Raft
@@ -66,7 +67,7 @@ async def demo(tasks: list[asyncio.Task]) -> None:
         servers.append(server)
 
     # Start gRPC servers and Raft main loops
-    ports = [50051, 50052, 50053]
+    ports = [int(addr.rsplit(":", 1)[1]) for addr in addrs]
     for server, port, node in zip(servers, ports, nodes, strict=True):
         tasks.append(asyncio.create_task(server.run(host="0.0.0.0", port=port)))
         tasks.append(asyncio.create_task(node.main()))
@@ -86,6 +87,7 @@ async def demo(tasks: list[asyncio.Task]) -> None:
         "SET name aioraft-ng",
         "SET version 0.2.0",
         "SET language python",
+        "DELETE language",
     ]
     for cmd in commands:
         success, result, hint = await leader.on_client_request(cmd)
@@ -98,7 +100,7 @@ async def demo(tasks: list[asyncio.Task]) -> None:
 
     # --- 4. Read-only queries via leader lease ---
     print("4. Read-only queries (leader lease)...")
-    queries = ["GET name", "GET version", "GET language", "GET missing_key"]
+    queries = ["GET name", "GET version", "GET language", "GET missing_key"]  # language was deleted
     for q in queries:
         success, result, hint = await leader.on_read_request(q)
         if success:
@@ -117,8 +119,11 @@ async def demo(tasks: list[asyncio.Task]) -> None:
     new_node, new_server = await create_node(new_addr, new_peers)
     nodes.append(new_node)
     servers.append(new_server)
-    tasks.append(asyncio.create_task(new_server.run(host="0.0.0.0", port=50054)))
-    tasks.append(asyncio.create_task(new_node.main()))
+    new_port = int(new_addr.rsplit(":", 1)[1])
+    new_server_task = asyncio.create_task(new_server.run(host="0.0.0.0", port=new_port))
+    new_node_task = asyncio.create_task(new_node.main())
+    tasks.append(new_server_task)
+    tasks.append(new_node_task)
 
     success, err = await leader.add_server(new_addr)
     if success:
@@ -133,6 +138,14 @@ async def demo(tasks: list[asyncio.Task]) -> None:
         print(f"   Removed {new_addr} -> cluster size: {leader.membership}")
     else:
         print(f"   Remove failed: {err}")
+
+    # Clean up the removed node's tasks
+    new_node_task.cancel()
+    new_server_task.cancel()
+    await asyncio.gather(new_node_task, new_server_task, return_exceptions=True)
+    tasks.remove(new_node_task)
+    tasks.remove(new_server_task)
+    print(f"   Stopped tasks for removed node {new_addr}")
     print()
 
     # --- 6. Summary ---
@@ -150,8 +163,8 @@ async def main() -> None:
         await asyncio.wait_for(demo(tasks), timeout=30.0)
     except TimeoutError:
         print("\nDemo timed out!")
-    except Exception as e:
-        print(f"\nError: {e}")
+    except Exception:
+        traceback.print_exc()
     finally:
         for task in tasks:
             task.cancel()
