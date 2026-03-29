@@ -1,14 +1,23 @@
-# Visual Studio Code
-.vscode
-
-# python-virtualenv
-venv
-
-# egg
-*.egg-info
-
+# Python
+__pycache__/
 *.pyc
+*.egg-info/
+dist/
+build/
 
-# cache
-.mypy_cache
-.pytest_cache
+# Virtual environments
+.venv/
+venv/
+
+# Cache
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.vscode/
+.idea/
+
+
+# Claude
+.claude/

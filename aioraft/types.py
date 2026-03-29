@@ -1,5 +1,5 @@
 import enum
-from typing import NewType, Type, TypeVar
+from typing import NewType, TypeVar
 
 RaftId = NewType("RaftId", str)
 
@@ -16,7 +16,7 @@ class RaftState(enum.Enum):
 T_aobj = TypeVar("T_aobj", bound="aobject")
 
 
-class aobject(object):
+class aobject:
     """
     An "asynchronous" object which guarantees to invoke both ``def __init__(self, ...)`` and
     ``async def __ainit(self)__`` to ensure asynchronous initialization of the object.
@@ -29,7 +29,7 @@ class aobject(object):
     """
 
     @classmethod
-    async def new(cls: Type[T_aobj], *args, **kwargs) -> T_aobj:
+    async def new(cls: type[T_aobj], *args, **kwargs) -> T_aobj:
         """
         We can do ``await SomeAObject(...)``, but this makes mypy
         to complain about its return type with ``await`` statement.

@@ -1,5 +1,5 @@
 import abc
-from typing import Iterable, Optional, Tuple
+from collections.abc import Iterable
 
 from aioraft.protos import raft_pb2
 from aioraft.types import RaftId
@@ -16,7 +16,7 @@ class AbstractRaftProtocol(abc.ABC):
         prev_log_term: int,
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         """Receiver implementation:
         1. Reply false if term < currentTerm
         2. Reply false if log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm
@@ -45,7 +45,7 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    async def on_client_request(self, command: str) -> Tuple[bool, str, Optional[str]]:
+    async def on_client_request(self, command: str) -> tuple[bool, str, str | None]:
         """Handle a client command request.
 
         Returns
@@ -65,7 +65,7 @@ class AbstractRaftProtocol(abc.ABC):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         """Receiver implementation:
         1. Reply false if term < currentTerm
         2. If votedFor is null or candidateId, and candidate's log is
@@ -96,7 +96,7 @@ class AbstractRaftProtocol(abc.ABC):
         last_included_index: int,
         last_included_term: int,
         data: bytes,
-    ) -> Tuple[int]:
+    ) -> tuple[int]:
         """Receiver implementation for InstallSnapshot RPC.
 
         Arguments

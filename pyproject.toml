@@ -1,11 +1,83 @@
-[tool.isort]
-profile = "black"
+[project]
+name = "aioraft-ng"
+version = "0.2.0"
+description = "An implementation of Raft consensus algorithm written in asyncio-based Python 3."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.13"
+authors = [
+    { name = "Lablup Inc." },
+    { name = "rapsealk", email = "jskang@lablup.com" },
+]
+keywords = ["raft", "consensus", "asyncio", "distributed-systems"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Distributed Computing",
+]
+dependencies = [
+    "grpcio>=1.70",
+    "protobuf>=5.29",
+]
+
+[project.urls]
+Homepage = "https://github.com/lablup/aioraft-ng"
+Repository = "https://github.com/lablup/aioraft-ng"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["aioraft"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 127
+exclude = ["aioraft/protos/raft_pb2.py", "aioraft/protos/raft_pb2_grpc.py"]
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "TCH",   # flake8-type-checking
+]
+ignore = [
+    "E203",   # whitespace before ':' (conflicts with formatter)
+    "E501",   # line too long (formatter handles this)
+    "B027",   # empty method in ABC without abstract decorator (intentional lifecycle hooks)
+    "SIM108", # ternary operator suggestion (keep explicit for readability)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["aioraft"]
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.13"
 ignore_missing_imports = true
 namespace_packages = true
 explicit_package_bases = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.14",
+    "pytest>=8.0",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.11",
+    "grpcio-tools>=1.70",
+    "types-protobuf>=5.29",
+]

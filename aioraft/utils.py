@@ -12,9 +12,7 @@ def build_loopback_ip() -> str:
 
 def build_local_ip() -> str:
     ps_ifconfig = subprocess.Popen(["ifconfig"], stdout=subprocess.PIPE)
-    ps_grep = subprocess.Popen(
-        ["grep", "inet "], stdin=ps_ifconfig.stdout, stdout=subprocess.PIPE
-    )
+    ps_grep = subprocess.Popen(["grep", "inet "], stdin=ps_ifconfig.stdout, stdout=subprocess.PIPE)
     output = subprocess.check_output(("grep", "-v", "127.0.0.1"), stdin=ps_grep.stdout)
     ps_ifconfig.wait()
     ps_grep.wait()
