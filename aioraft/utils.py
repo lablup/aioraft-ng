@@ -1,12 +1,9 @@
 import random
 import subprocess
-import threading
 
 
 def randrangef(start: float, stop: float) -> float:
     return random.random() * (stop - start) + start
-    r = random.random()
-    return r * stop + (1 - r) * start
 
 
 def build_loopback_ip() -> str:
@@ -29,23 +26,26 @@ def build_local_ip() -> str:
 
 
 class AtomicInteger:
+    """Simple mutable integer wrapper for in-place updates.
+
+    Note: This is not truly atomic (no lock protection). It is safe for
+    single-threaded asyncio use but should not be shared across OS threads
+    without external synchronisation.
+    """
+
     def __init__(self, value: int = 0):
         self.__value = value
-        self.__lock = threading.Lock()
 
     def increase(self, value: int = 1) -> "AtomicInteger":
-        with self.__lock:
-            self.__value += value
+        self.__value += value
         return self
 
     def decrease(self, value: int = 1) -> "AtomicInteger":
-        with self.__lock:
-            self.__value -= value
+        self.__value -= value
         return self
 
     def set(self, value: int = 0) -> "AtomicInteger":
-        with self.__lock:
-            self.__value = value
+        self.__value = value
         return self
 
     @property

@@ -1,5 +1,5 @@
 import abc
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 from aioraft.protos import raft_pb2
 from aioraft.types import RaftId
@@ -45,6 +45,19 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def on_client_request(self, command: str) -> Tuple[bool, str, Optional[str]]:
+        """Handle a client command request.
+
+        Returns
+        -------
+        :param bool success: True if the command was committed and applied
+        :param str result: result of applying the command (or error message)
+        :param Optional[str] leader_hint: address of current leader if this node is not the leader
+        -------
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def on_request_vote(
         self,
         *,
@@ -70,6 +83,34 @@ class AbstractRaftProtocol(abc.ABC):
         -------
         :param int term: currentTerm, for candidate to update itself
         :param bool vote_granted: true means candidate received vote
+        -------
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    async def on_install_snapshot(
+        self,
+        *,
+        term: int,
+        leader_id: RaftId,
+        last_included_index: int,
+        last_included_term: int,
+        data: bytes,
+    ) -> Tuple[int]:
+        """Receiver implementation for InstallSnapshot RPC.
+
+        Arguments
+        ---------
+        :param int term: leader's term
+        :param RaftId leader_id: so follower can redirect clients
+        :param int last_included_index: the snapshot replaces all entries up through and including this index
+        :param int last_included_term: term of last_included_index entry
+        :param bytes data: serialized snapshot of state machine
+        ---------
+
+        Returns
+        -------
+        :param int term: currentTerm, for leader to update itself
         -------
         """
         raise NotImplementedError()
