@@ -1022,9 +1022,9 @@ class TestCommitIndexRule5:
         assert raft.commit_index == 2
 
     @pytest.mark.asyncio
-    async def test_heartbeat_does_not_use_log_length_for_commit(self):
-        """On heartbeat (empty entries), commitIndex should use prev_log_index,
-        not total log length."""
+    async def test_heartbeat_uses_follower_last_log_index_for_commit(self):
+        """On heartbeat (empty entries), commitIndex should use follower's
+        actual last log index, not prev_log_index (which can be 0)."""
         mock_server = MagicMock()
         mock_server.bind = MagicMock()
         mock_client = AsyncMock()
@@ -1043,19 +1043,19 @@ class TestCommitIndexRule5:
         ]
         raft._Raft__commit_index = 0
 
-        # Heartbeat with prev_log_index=1, leaderCommit=5
-        # Should set commitIndex = min(5, 1) = 1, not min(5, 2)
+        # Heartbeat with prev_log_index=2, leaderCommit=5
+        # Should set commitIndex = min(5, 2) = 2 (follower's last log index)
         term, success = await raft.on_append_entries(
             term=2,
             leader_id="leader",
-            prev_log_index=1,
+            prev_log_index=2,
             prev_log_term=1,
             entries=[],
             leader_commit=5,
         )
 
         assert success is True
-        assert raft.commit_index == 1
+        assert raft.commit_index == 2
 
 
 class TestWaitForCommitLeadershipLoss:
@@ -3128,3 +3128,154 @@ class TestMembershipChanges:
         config = await storage.load_configuration()
         assert config is not None
         assert "node-4" in config
+
+
+class TestElectionTimerReset:
+    """Regression tests for #18: election timer must only reset on fully valid AppendEntries."""
+
+    @pytest.mark.asyncio
+    async def test_bad_prev_log_does_not_reset_heartbeat(self):
+        """on_append_entries with valid term but bad prevLogIndex must NOT
+        reset the heartbeat event (#18)."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(2)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+        ]
+
+        # Clear heartbeat event to observe
+        raft._Raft__heartbeat_event.clear()
+
+        # Valid term but prevLogTerm mismatch (actual term at index 1 is 1, not 2)
+        term, success = await raft.on_append_entries(
+            term=2,
+            leader_id="leader",
+            prev_log_index=1,
+            prev_log_term=2,
+            entries=[raft_pb2.Log(index=2, term=2, command="SET b 2")],
+            leader_commit=0,
+        )
+
+        assert success is False
+        assert not raft._heartbeat_event.is_set(), "Heartbeat event was set despite log consistency check failure"
+
+    @pytest.mark.asyncio
+    async def test_bad_prev_log_index_missing_does_not_reset_heartbeat(self):
+        """on_append_entries with valid term but prevLogIndex beyond log must NOT
+        reset the heartbeat event (#18)."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(2)
+        raft._Raft__log = []  # empty log
+
+        raft._Raft__heartbeat_event.clear()
+
+        # prevLogIndex=5 but log is empty
+        term, success = await raft.on_append_entries(
+            term=2,
+            leader_id="leader",
+            prev_log_index=5,
+            prev_log_term=1,
+            entries=[],
+            leader_commit=0,
+        )
+
+        assert success is False
+        assert not raft._heartbeat_event.is_set(), "Heartbeat event was set despite missing prevLogIndex entry"
+
+
+class TestHeartbeatCommitIndex:
+    """Regression tests for #19: heartbeat commit index must not regress."""
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_advances_commit_index(self):
+        """Heartbeat with leader_commit > 0 should correctly advance commitIndex
+        using follower's actual last log index, not regress it (#19)."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+            raft_pb2.Log(index=3, term=1, command="SET c 3"),
+        ]
+        raft._Raft__commit_index = 2
+
+        # Heartbeat (no entries) with prev_log_index=3, leader_commit=3
+        term, success = await raft.on_append_entries(
+            term=1,
+            leader_id="leader",
+            prev_log_index=3,
+            prev_log_term=1,
+            entries=[],
+            leader_commit=3,
+        )
+
+        assert success is True
+        assert raft.commit_index == 3, f"commitIndex should advance to 3, got {raft.commit_index}"
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_does_not_regress_commit_index(self):
+        """Heartbeat must never reduce commitIndex (#19)."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+        ]
+        raft._Raft__commit_index = 2
+
+        # Heartbeat with prev_log_index=0 (initial heartbeat), leader_commit=1
+        # Before fix, last_new_index would be prev_log_index=0, causing
+        # commitIndex = min(1, 0) = 0, regressing from 2.
+        # The guard `leader_commit > self.__commit_index` prevents this
+        # since leader_commit=1 < commit_index=2.
+        term, success = await raft.on_append_entries(
+            term=1,
+            leader_id="leader",
+            prev_log_index=0,
+            prev_log_term=0,
+            entries=[],
+            leader_commit=1,
+        )
+
+        assert success is True
+        assert raft.commit_index == 2, f"commitIndex should remain at 2, got {raft.commit_index}"

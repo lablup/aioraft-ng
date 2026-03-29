@@ -20,7 +20,7 @@ from aioraft.types import (
     RaftState,
     aobject,
 )
-from aioraft.utils import AtomicInteger, randrangef
+from aioraft.utils import MutableInt, randrangef
 
 logging.basicConfig(level=logging.INFO)
 
@@ -95,7 +95,7 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__leader_id: RaftId | None = None
 
         # Persistent state (may be overwritten in __ainit__ from storage)
-        self.__current_term: AtomicInteger = AtomicInteger(0)
+        self.__current_term: MutableInt = MutableInt(0)
         self.__voted_for: RaftId | None = None
         self.__log: list[raft_pb2.Log] = []
 
@@ -109,7 +109,7 @@ class Raft(aobject, AbstractRaftProtocol):
         if self.__storage:
             await self.__storage.initialize()
             term = await self.__storage.load_term()
-            self.__current_term = AtomicInteger(term)
+            self.__current_term = MutableInt(term)
             vote = await self.__storage.load_vote()
             self.__voted_for = RaftId(vote) if vote is not None else None
             self.__log = await self.__storage.load_logs()
@@ -577,7 +577,6 @@ class Raft(aobject, AbstractRaftProtocol):
         if term < (current_term := self.current_term):
             return (current_term, False)
 
-        await self.__reset_timeout()
         await self.__synchronize_term(term)
 
         # Track the leader
@@ -651,10 +650,12 @@ class Raft(aobject, AbstractRaftProtocol):
             if entries_list:
                 last_new_index = entries_list[-1].index
             else:
-                last_new_index = prev_log_index  # heartbeat case
+                # Heartbeat: use follower's actual last log index
+                last_new_index = self.__last_included_index + len(self.__log)
             self.__commit_index = min(leader_commit, last_new_index)
             self.__commit_event.set()
 
+        await self.__reset_timeout()
         return (self.current_term, True)
 
     async def on_request_vote(
