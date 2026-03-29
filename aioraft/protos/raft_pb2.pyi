@@ -91,3 +91,52 @@ class RequestVoteResponse(_message.Message):
     def __init__(
         self, term: _Optional[int] = ..., vote_granted: bool = ...
     ) -> None: ...
+
+class ClientRequestMessage(_message.Message):
+    __slots__ = ["command"]
+    COMMAND_FIELD_NUMBER: _ClassVar[int]
+    command: str
+    def __init__(self, command: _Optional[str] = ...) -> None: ...
+
+class ClientResponseMessage(_message.Message):
+    __slots__ = ["error", "leader_hint", "result", "success"]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    LEADER_HINT_FIELD_NUMBER: _ClassVar[int]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    error: str
+    leader_hint: str
+    result: str
+    success: bool
+    def __init__(
+        self,
+        success: bool = ...,
+        result: _Optional[str] = ...,
+        leader_hint: _Optional[str] = ...,
+        error: _Optional[str] = ...,
+    ) -> None: ...
+
+class InstallSnapshotRequest:
+    term: int
+    leader_id: str
+    last_included_index: int
+    last_included_term: int
+    data: bytes
+    def __init__(
+        self,
+        term: int = ...,
+        leader_id: str = ...,
+        last_included_index: int = ...,
+        last_included_term: int = ...,
+        data: bytes = ...,
+    ) -> None: ...
+    def SerializeToString(self) -> bytes: ...
+    @classmethod
+    def FromString(cls, raw: bytes) -> "InstallSnapshotRequest": ...
+
+class InstallSnapshotResponse:
+    term: int
+    def __init__(self, term: int = ...) -> None: ...
+    def SerializeToString(self) -> bytes: ...
+    @classmethod
+    def FromString(cls, raw: bytes) -> "InstallSnapshotResponse": ...

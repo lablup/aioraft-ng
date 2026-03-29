@@ -4,7 +4,17 @@ import json
 import logging
 import math
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Dict, Final, Iterable, List, Optional, Set, Tuple
+from typing import (
+    Awaitable,
+    Callable,
+    Dict,
+    Final,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 from aioraft.client import AbstractRaftClient
 from aioraft.protocol import AbstractRaftProtocol
@@ -12,7 +22,13 @@ from aioraft.protos import raft_pb2
 from aioraft.server import AbstractRaftServer
 from aioraft.state_machine import StateMachine
 from aioraft.storage import Storage
-from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE, RaftId, RaftState, aobject
+from aioraft.types import (
+    CONF_CHANGE_ADD,
+    CONF_CHANGE_REMOVE,
+    RaftId,
+    RaftState,
+    aobject,
+)
 from aioraft.utils import AtomicInteger, randrangef
 
 logging.basicConfig(level=logging.INFO)
@@ -72,13 +88,15 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
         self.__configuration: Set[RaftId] = set(configuration)
-        self.__on_state_changed: Optional[
-            Callable[[RaftState], Awaitable]
-        ] = on_state_changed
+        self.__on_state_changed: Optional[Callable[[RaftState], Awaitable]] = (
+            on_state_changed
+        )
         self.__state_machine: Optional[StateMachine] = state_machine
         self.__storage: Optional[Storage] = storage
         self.__snapshot_threshold: int = (
-            snapshot_threshold if snapshot_threshold is not None else self.DEFAULT_SNAPSHOT_THRESHOLD
+            snapshot_threshold
+            if snapshot_threshold is not None
+            else self.DEFAULT_SNAPSHOT_THRESHOLD
         )
 
         self.__state: RaftState = RaftState.FOLLOWER
@@ -88,6 +106,11 @@ class Raft(aobject, AbstractRaftProtocol):
         self._vote_request_lock = asyncio.Lock()
 
         self.__leader_id: Optional[RaftId] = None
+
+        # Persistent state (may be overwritten in __ainit__ from storage)
+        self.__current_term: AtomicInteger = AtomicInteger(0)
+        self.__voted_for: Optional[RaftId] = None
+        self.__log: List[raft_pb2.Log] = []
 
         # Snapshot metadata
         self.__last_included_index: int = 0
@@ -100,7 +123,8 @@ class Raft(aobject, AbstractRaftProtocol):
             await self.__storage.initialize()
             term = await self.__storage.load_term()
             self.__current_term = AtomicInteger(term)
-            self.__voted_for = await self.__storage.load_vote()
+            vote = await self.__storage.load_vote()
+            self.__voted_for = RaftId(vote) if vote is not None else None
             self.__log = await self.__storage.load_logs()
             # Restore snapshot metadata
             snapshot = await self.__storage.load_snapshot()
@@ -111,7 +135,7 @@ class Raft(aobject, AbstractRaftProtocol):
             # then replay any log entries after the snapshot point.
             persisted_config = await self.__storage.load_configuration()
             if persisted_config is not None:
-                self.__configuration = set(persisted_config)
+                self.__configuration = {RaftId(p) for p in persisted_config}
             # Rebuild configuration from log entries (handles entries after snapshot)
             self._rebuild_configuration_from_log()
         else:
@@ -162,9 +186,9 @@ class Raft(aobject, AbstractRaftProtocol):
             each entry contains command for state machine, and term when entry was received by leader
             (first index is 1)
         """
-        self.__current_term: AtomicInteger = AtomicInteger(0)
-        self.__voted_for: Optional[RaftId] = None
-        self.__log: List[raft_pb2.Log] = []
+        # Already initialized in __init__; this is a no-op but kept
+        # for clarity when storage is not provided.
+        pass
 
     async def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
@@ -304,7 +328,9 @@ class Raft(aobject, AbstractRaftProtocol):
             if snapshot_data is None and self.__state_machine:
                 state_data = await self.__state_machine.snapshot()
                 # B4: Include configuration in live snapshot
-                snapshot_data = self._serialize_snapshot_data(state_data, self.__configuration)
+                snapshot_data = self._serialize_snapshot_data(
+                    state_data, self.__configuration
+                )
                 snap_idx = self.__last_applied
                 entry = self._log_at_index(snap_idx)
                 snap_term = entry.term if entry else self.__last_included_term
@@ -337,7 +363,9 @@ class Raft(aobject, AbstractRaftProtocol):
 
         # Entries from nextIndex to end of log (adjusted for snapshot offset)
         offset = next_idx - self.__last_included_index - 1
-        entries = self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
+        entries = (
+            self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
+        )
 
         term, success = await self.__client.append_entries(
             to=peer_id,
@@ -426,13 +454,15 @@ class Raft(aobject, AbstractRaftProtocol):
                 self.__configuration.discard(address)
 
     @staticmethod
-    def _serialize_snapshot_data(state_data: bytes, configuration: Set[str]) -> bytes:
+    def _serialize_snapshot_data(
+        state_data: bytes, configuration: Set[RaftId]
+    ) -> bytes:
         """Wrap state machine data with configuration metadata for snapshots."""
         meta = json.dumps({"config": sorted(configuration)}).encode()
         return len(meta).to_bytes(4, "big") + meta + state_data
 
     @staticmethod
-    def _deserialize_snapshot_data(raw: bytes) -> Tuple[bytes, Set[str]]:
+    def _deserialize_snapshot_data(raw: bytes) -> Tuple[bytes, Set[RaftId]]:
         """Unwrap snapshot data into state machine data and configuration."""
         if len(raw) < 4:
             return raw, set()
@@ -442,18 +472,22 @@ class Raft(aobject, AbstractRaftProtocol):
         try:
             meta = json.loads(raw[4 : 4 + meta_len])
             state_data = raw[4 + meta_len :]
-            return state_data, set(meta.get("config", []))
+            return state_data, {RaftId(s) for s in meta.get("config", [])}
         except (json.JSONDecodeError, UnicodeDecodeError):
             return raw, set()
 
     @staticmethod
     def _is_config_change(command: str) -> bool:
         """Return True if the command is a configuration change entry."""
-        return command.startswith(CONF_CHANGE_ADD) or command.startswith(CONF_CHANGE_REMOVE)
+        return command.startswith(CONF_CHANGE_ADD) or command.startswith(
+            CONF_CHANGE_REMOVE
+        )
 
     def _has_pending_config_change(self) -> bool:
         """Check if there's an uncommitted config change in the log."""
-        for i in range(self.__commit_index + 1, self.__last_included_index + len(self.__log) + 1):
+        for i in range(
+            self.__commit_index + 1, self.__last_included_index + len(self.__log) + 1
+        ):
             entry = self._log_at_index(i)
             if entry and self._is_config_change(entry.command):
                 return True
@@ -611,7 +645,9 @@ class Raft(aobject, AbstractRaftProtocol):
         # Persist before updating in-memory state
         if truncate_from is not None:
             if self.__storage:
-                await self.__storage.truncate_and_append(truncate_from, new_entries_to_append)
+                await self.__storage.truncate_and_append(
+                    truncate_from, new_entries_to_append
+                )
             adjusted = truncate_from - self.__last_included_index - 1
             self.__log = self.__log[:adjusted]
             self.__log.extend(new_entries_to_append)
@@ -658,7 +694,11 @@ class Raft(aobject, AbstractRaftProtocol):
         async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
-                    f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term}"
+                    "[on_request_vote] FALSE id=%s term=%d candidate=%s req_term=%d",
+                    self.__id[-5:],
+                    current_term,
+                    candidate_id[-5:],
+                    term,
                 )
                 return (current_term, False)
             await self.__synchronize_term(term)
@@ -674,7 +714,11 @@ class Raft(aobject, AbstractRaftProtocol):
                         return (self.current_term, False)
 
                     log.debug(
-                        f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                        "[on_request_vote] TRUE id=%s term=%d candidate=%s req_term=%d",
+                        self.__id[-5:],
+                        current_term,
+                        candidate_id[-5:],
+                        term,
                     )
                     if self.__storage:
                         await self.__storage.save_vote(candidate_id)
@@ -682,7 +726,11 @@ class Raft(aobject, AbstractRaftProtocol):
                     await self.__reset_timeout()
                     return (self.current_term, True)
             log.debug(
-                f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
+                "[on_request_vote] FALSE id=%s term=%d candidate=%s req_term=%d",
+                self.__id[-5:],
+                current_term,
+                candidate_id[-5:],
+                term,
             )
             return (self.current_term, False)
 
@@ -746,7 +794,10 @@ class Raft(aobject, AbstractRaftProtocol):
 
         if self.__storage:
             await self.__storage.compact_log_with_snapshot(
-                last_index, last_term, data, remaining_logs,
+                last_index,
+                last_term,
+                data,
+                remaining_logs,
             )
             # B3: Persist configuration alongside snapshot so it survives compaction
             await self.__storage.save_configuration(sorted(self.__configuration))
@@ -793,7 +844,10 @@ class Raft(aobject, AbstractRaftProtocol):
         # Persist atomically
         if self.__storage:
             await self.__storage.compact_log_with_snapshot(
-                last_included_index, last_included_term, data, remaining_logs,
+                last_included_index,
+                last_included_term,
+                data,
+                remaining_logs,
             )
             # Persist restored configuration
             await self.__storage.save_configuration(sorted(self.__configuration))

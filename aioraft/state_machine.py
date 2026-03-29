@@ -23,7 +23,7 @@ class StateMachine(abc.ABC):
 class KeyValueStateMachine(StateMachine):
     """Simple dict-based KV store. Commands are 'SET key value', 'GET key', 'DELETE key'."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._store: dict[str, str] = {}
 
     async def apply(self, command: str) -> Any:
