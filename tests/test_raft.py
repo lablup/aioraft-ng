@@ -3818,3 +3818,73 @@ class TestReplicateToSnapshotEdgeCases:
         mock_client.install_snapshot.assert_called_once()
         assert raft._Raft__next_index["node-2"] == 11
         assert raft._Raft__match_index["node-2"] == 10
+
+
+# ---------------------------------------------------------------------------
+# Connection pooling tests (GrpcRaftClient)
+# ---------------------------------------------------------------------------
+
+
+def test_grpc_client_channel_caching():
+    """Channels are cached per target address."""
+    client = GrpcRaftClient()
+    ch1 = client._get_channel("127.0.0.1:50051")
+    ch2 = client._get_channel("127.0.0.1:50051")
+    assert ch1 is ch2, "Same target should return the same cached channel"
+
+    ch3 = client._get_channel("127.0.0.1:50052")
+    assert ch3 is not ch1, "Different target should create a new channel"
+    assert len(client._channels) == 2
+
+
+def test_grpc_client_invalidate_channel():
+    """Invalidating a channel removes it from cache; next call creates a fresh one."""
+    client = GrpcRaftClient()
+    ch1 = client._get_channel("127.0.0.1:50051")
+    client._invalidate_channel("127.0.0.1:50051")
+    assert "127.0.0.1:50051" not in client._channels
+    ch2 = client._get_channel("127.0.0.1:50051")
+    assert ch2 is not ch1, "After invalidation a new channel should be created"
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_close():
+    """close() clears all cached channels."""
+    client = GrpcRaftClient()
+    client._get_channel("127.0.0.1:50051")
+    client._get_channel("127.0.0.1:50052")
+    assert len(client._channels) == 2
+    await client.close()
+    assert len(client._channels) == 0
+
+
+@pytest.mark.asyncio
+async def test_grpc_client_retry_on_connection_error():
+    """append_entries retries once with a fresh channel on AioRpcError."""
+    client = GrpcRaftClient()
+
+    call_count = 0
+    original_get_channel = client._get_channel
+
+    def tracking_get_channel(target):
+        nonlocal call_count
+        call_count += 1
+        return original_get_channel(target)
+
+    client._get_channel = tracking_get_channel
+
+    # The RPC will fail because there's no server, but it should attempt
+    # to invalidate and retry. We just verify the retry mechanics.
+    term, success = await client.append_entries(
+        to="127.0.0.1:19999",
+        term=1,
+        leader_id="leader-1",
+        prev_log_index=0,
+        prev_log_term=0,
+        entries=[],
+        leader_commit=0,
+        timeout=0.5,
+    )
+    # Should have called _get_channel at least twice (initial + retry)
+    assert call_count >= 2, "Expected retry on connection error"
+    assert success is False

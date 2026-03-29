@@ -1,11 +1,14 @@
 import abc
 import asyncio
+import logging
 from collections.abc import Iterable
 
 import grpc
 
 from aioraft.protos import raft_pb2, raft_pb2_grpc
 from aioraft.types import RaftId
+
+log = logging.getLogger(__name__)
 
 
 class AbstractRaftClient(abc.ABC):
@@ -92,14 +95,45 @@ class AbstractRaftClient(abc.ABC):
         """
         raise NotImplementedError()
 
+    async def close(self) -> None:
+        """Close any resources held by the client. Default is a no-op."""
+
 
 class GrpcRaftClient(AbstractRaftClient):
     """
-    A gRPC-based implementation of `AbstractRaftClient`.
+    A gRPC-based implementation of `AbstractRaftClient` with connection pooling.
     """
 
     def __init__(self, credentials: grpc.ChannelCredentials | None = None):
         self.__credentials: grpc.ChannelCredentials | None = credentials
+        self._channels: dict[str, grpc.aio.Channel] = {}
+
+    def _get_channel(self, target: str) -> grpc.aio.Channel:
+        """Return a cached channel for *target*, creating one if needed."""
+        if target not in self._channels:
+            self._channels[target] = self._create_channel(target)
+        return self._channels[target]
+
+    def _create_channel(self, target: str) -> grpc.aio.Channel:
+        if credentials := self.__credentials:
+            return grpc.aio.secure_channel(target, credentials)
+        return grpc.aio.insecure_channel(target)
+
+    def _invalidate_channel(self, target: str) -> None:
+        """Remove a channel from the cache so the next call creates a fresh one."""
+        channel = self._channels.pop(target, None)
+        if channel is not None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(channel.close())
+            except RuntimeError:
+                pass
+
+    async def close(self) -> None:
+        """Close all cached channels."""
+        for channel in self._channels.values():
+            await channel.close()
+        self._channels.clear()
 
     async def append_entries(
         self,
@@ -121,18 +155,23 @@ class GrpcRaftClient(AbstractRaftClient):
             entries=entries,
             leader_commit=leader_commit,
         )
-        async with self.__create_channel(to) as channel:
+        for attempt in range(2):
+            channel = self._get_channel(to)
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
                 response = await asyncio.wait_for(stub.AppendEntries(request), timeout=timeout)
                 return response.term, response.success
             except grpc.aio.AioRpcError:
-                pass
+                if attempt == 0:
+                    log.debug("Connection error to %s, retrying with fresh channel", to)
+                    self._invalidate_channel(to)
+                    continue
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise
-            return term, False
+            break
+        return term, False
 
     async def request_vote(
         self,
@@ -150,18 +189,23 @@ class GrpcRaftClient(AbstractRaftClient):
             last_log_index=last_log_index,
             last_log_term=last_log_term,
         )
-        async with self.__create_channel(to) as channel:
+        for attempt in range(2):
+            channel = self._get_channel(to)
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
                 response = await asyncio.wait_for(stub.RequestVote(request), timeout=timeout)
                 return response.term, response.vote_granted
             except grpc.aio.AioRpcError:
-                pass
+                if attempt == 0:
+                    log.debug("Connection error to %s, retrying with fresh channel", to)
+                    self._invalidate_channel(to)
+                    continue
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise
-            return term, False
+            break
+        return term, False
 
     async def install_snapshot(
         self,
@@ -181,20 +225,20 @@ class GrpcRaftClient(AbstractRaftClient):
             last_included_term=last_included_term,
             data=data,
         )
-        async with self.__create_channel(to) as channel:
+        for attempt in range(2):
+            channel = self._get_channel(to)
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
                 response = await asyncio.wait_for(stub.InstallSnapshot(request), timeout=timeout)
                 return (response.term,)
             except grpc.aio.AioRpcError:
-                pass
+                if attempt == 0:
+                    log.debug("Connection error to %s, retrying with fresh channel", to)
+                    self._invalidate_channel(to)
+                    continue
             except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise
-            return (term,)
-
-    def __create_channel(self, target: str) -> grpc.aio.Channel:
-        if credentials := self.__credentials:
-            return grpc.aio.secure_channel(target, credentials)
-        return grpc.aio.insecure_channel(target)
+            break
+        return (term,)
