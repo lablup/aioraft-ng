@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import json
 import logging
 import math
 from datetime import datetime
@@ -11,7 +12,7 @@ from aioraft.protos import raft_pb2
 from aioraft.server import AbstractRaftServer
 from aioraft.state_machine import StateMachine
 from aioraft.storage import Storage
-from aioraft.types import RaftId, RaftState, aobject
+from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE, RaftId, RaftState, aobject
 from aioraft.utils import AtomicInteger, randrangef
 
 logging.basicConfig(level=logging.INFO)
@@ -106,6 +107,13 @@ class Raft(aobject, AbstractRaftProtocol):
             if snapshot is not None:
                 self.__last_included_index = snapshot[0]
                 self.__last_included_term = snapshot[1]
+            # B3: Load persisted configuration first (covers compacted entries),
+            # then replay any log entries after the snapshot point.
+            persisted_config = await self.__storage.load_configuration()
+            if persisted_config is not None:
+                self.__configuration = set(persisted_config)
+            # Rebuild configuration from log entries (handles entries after snapshot)
+            self._rebuild_configuration_from_log()
         else:
             await self._initialize_persistent_state()
         await self._initialize_volatile_state()
@@ -294,7 +302,9 @@ class Raft(aobject, AbstractRaftProtocol):
             # Fall back to a live snapshot with correct metadata when no
             # persisted snapshot is available.
             if snapshot_data is None and self.__state_machine:
-                snapshot_data = await self.__state_machine.snapshot()
+                state_data = await self.__state_machine.snapshot()
+                # B4: Include configuration in live snapshot
+                snapshot_data = self._serialize_snapshot_data(state_data, self.__configuration)
                 snap_idx = self.__last_applied
                 entry = self._log_at_index(snap_idx)
                 snap_term = entry.term if entry else self.__last_included_term
@@ -404,6 +414,112 @@ class Raft(aobject, AbstractRaftProtocol):
             except asyncio.TimeoutError:
                 continue  # re-check leadership
 
+    def _rebuild_configuration_from_log(self) -> None:
+        """Replay config change entries from the log to rebuild the configuration set.
+        Called on startup after loading logs from storage."""
+        for entry in self.__log:
+            if entry.command.startswith(CONF_CHANGE_ADD):
+                address = RaftId(entry.command.split(":", 1)[1])
+                self.__configuration.add(address)
+            elif entry.command.startswith(CONF_CHANGE_REMOVE):
+                address = RaftId(entry.command.split(":", 1)[1])
+                self.__configuration.discard(address)
+
+    @staticmethod
+    def _serialize_snapshot_data(state_data: bytes, configuration: Set[str]) -> bytes:
+        """Wrap state machine data with configuration metadata for snapshots."""
+        meta = json.dumps({"config": sorted(configuration)}).encode()
+        return len(meta).to_bytes(4, "big") + meta + state_data
+
+    @staticmethod
+    def _deserialize_snapshot_data(raw: bytes) -> Tuple[bytes, Set[str]]:
+        """Unwrap snapshot data into state machine data and configuration."""
+        if len(raw) < 4:
+            return raw, set()
+        meta_len = int.from_bytes(raw[:4], "big")
+        if meta_len <= 0 or 4 + meta_len > len(raw):
+            return raw, set()
+        try:
+            meta = json.loads(raw[4 : 4 + meta_len])
+            state_data = raw[4 + meta_len :]
+            return state_data, set(meta.get("config", []))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return raw, set()
+
+    @staticmethod
+    def _is_config_change(command: str) -> bool:
+        """Return True if the command is a configuration change entry."""
+        return command.startswith(CONF_CHANGE_ADD) or command.startswith(CONF_CHANGE_REMOVE)
+
+    def _has_pending_config_change(self) -> bool:
+        """Check if there's an uncommitted config change in the log."""
+        for i in range(self.__commit_index + 1, self.__last_included_index + len(self.__log) + 1):
+            entry = self._log_at_index(i)
+            if entry and self._is_config_change(entry.command):
+                return True
+        return False
+
+    async def add_server(self, address: RaftId) -> Tuple[bool, str]:
+        """Add a server to the cluster. Must be called on the leader."""
+        if not self.has_leadership():
+            return (False, "not leader")
+        if address in self.__configuration or address == self.__id:
+            return (False, "server already in cluster")
+        if self._has_pending_config_change():
+            return (False, "another config change is pending")
+        # B1: Update configuration BEFORE appending entry so heartbeats
+        # immediately see the new peer (avoids stale config window).
+        self.__configuration.add(address)
+        self.__next_index[address] = 1  # Start from beginning so new server catches up
+        self.__match_index[address] = 0
+        # Append config change entry
+        entry = await self._append_entry(f"{CONF_CHANGE_ADD}:{address}")
+        # Persist configuration
+        if self.__storage:
+            await self.__storage.save_configuration(sorted(self.__configuration))
+        # Wait for commit
+        try:
+            await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
+        except (asyncio.TimeoutError, RuntimeError):
+            return (False, "failed to commit config change")
+        return (True, "")
+
+    async def remove_server(self, address: RaftId) -> Tuple[bool, str]:
+        """Remove a server from the cluster. Must be called on the leader."""
+        if not self.has_leadership():
+            return (False, "not leader")
+        if address not in self.__configuration and address != self.__id:
+            return (False, "server not in cluster")
+        if self._has_pending_config_change():
+            return (False, "another config change is pending")
+
+        # B6: Handle self-removal explicitly
+        if address == self.__id:
+            entry = await self._append_entry(f"{CONF_CHANGE_REMOVE}:{address}")
+            try:
+                await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
+            except (asyncio.TimeoutError, RuntimeError):
+                return (False, "failed to commit config change")
+            await self.__change_state(RaftState.FOLLOWER)
+            return (True, "")
+
+        # Config takes effect immediately
+        self.__configuration.discard(address)
+        entry = await self._append_entry(f"{CONF_CHANGE_REMOVE}:{address}")
+        # Persist configuration
+        if self.__storage:
+            await self.__storage.save_configuration(sorted(self.__configuration))
+        # B2: Don't delete replication state yet - keep replicating so the
+        # removed server receives the config change entry.
+        try:
+            await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
+        except (asyncio.TimeoutError, RuntimeError):
+            return (False, "failed to commit config change")
+        # Now safe to clean up replication state after commit
+        self.__next_index.pop(address, None)
+        self.__match_index.pop(address, None)
+        return (True, "")
+
     def has_leadership(self) -> bool:
         return self.__state is RaftState.LEADER
 
@@ -418,6 +534,10 @@ class Raft(aobject, AbstractRaftProtocol):
         """
         if not self.has_leadership():
             return (False, "", self.__leader_id)
+
+        # B5: Reject commands that look like config changes to prevent injection
+        if self._is_config_change(command):
+            return (False, "invalid command: reserved prefix", None)
 
         # Append to local log
         entry = await self._append_entry(command)
@@ -500,6 +620,21 @@ class Raft(aobject, AbstractRaftProtocol):
                 await self.__storage.append_logs(new_entries_to_append)
             self.__log.extend(new_entries_to_append)
 
+        # Apply configuration changes from new entries immediately
+        config_changed = False
+        for entry in new_entries_to_append:
+            if entry.command.startswith(CONF_CHANGE_ADD):
+                address = RaftId(entry.command.split(":", 1)[1])
+                self.__configuration.add(address)
+                config_changed = True
+            elif entry.command.startswith(CONF_CHANGE_REMOVE):
+                address = RaftId(entry.command.split(":", 1)[1])
+                self.__configuration.discard(address)
+                config_changed = True
+        # B3: Persist configuration whenever it changes
+        if config_changed and self.__storage:
+            await self.__storage.save_configuration(sorted(self.__configuration))
+
         # Rule 5: advance commitIndex
         # Per Raft paper: set commitIndex = min(leaderCommit, index of last new entry)
         if leader_commit > self.__commit_index:
@@ -560,6 +695,8 @@ class Raft(aobject, AbstractRaftProtocol):
                 # (all nodes apply the same sequence).
                 self.__last_applied += 1
                 entry = self._log_at_index(self.__last_applied)
+                if entry and self._is_config_change(entry.command):
+                    continue  # Config changes don't go to state machine
                 if entry and self.__state_machine:
                     try:
                         await self.__state_machine.apply(entry.command)
@@ -593,12 +730,15 @@ class Raft(aobject, AbstractRaftProtocol):
         if self.__last_applied <= self.__last_included_index:
             return
 
-        data = await self.__state_machine.snapshot()
+        state_data = await self.__state_machine.snapshot()
         last_index = self.__last_applied
         last_entry = self._log_at_index(last_index)
         if last_entry is None:
             return
         last_term = last_entry.term
+
+        # B4: Include configuration in snapshot data so followers can restore it
+        data = self._serialize_snapshot_data(state_data, self.__configuration)
 
         # Discard compacted log entries
         entries_to_discard = last_index - self.__last_included_index
@@ -608,6 +748,8 @@ class Raft(aobject, AbstractRaftProtocol):
             await self.__storage.compact_log_with_snapshot(
                 last_index, last_term, data, remaining_logs,
             )
+            # B3: Persist configuration alongside snapshot so it survives compaction
+            await self.__storage.save_configuration(sorted(self.__configuration))
 
         self.__log = remaining_logs
         self.__last_included_index = last_index
@@ -634,9 +776,16 @@ class Raft(aobject, AbstractRaftProtocol):
         await self.__reset_timeout()
         self.__leader_id = leader_id
 
+        # B4: Deserialize snapshot data to extract configuration and state machine data
+        state_data, snapshot_config = self._deserialize_snapshot_data(data)
+
         # Restore state machine
         if self.__state_machine:
-            await self.__state_machine.restore(data)
+            await self.__state_machine.restore(state_data)
+
+        # B4: Restore configuration from snapshot
+        if snapshot_config:
+            self.__configuration = snapshot_config
 
         # Discard entire log up to snapshot
         remaining_logs = [e for e in self.__log if e.index > last_included_index]
@@ -646,6 +795,8 @@ class Raft(aobject, AbstractRaftProtocol):
             await self.__storage.compact_log_with_snapshot(
                 last_included_index, last_included_term, data, remaining_logs,
             )
+            # Persist restored configuration
+            await self.__storage.save_configuration(sorted(self.__configuration))
 
         self.__log = remaining_logs
         self.__last_included_index = last_included_index
@@ -709,3 +860,8 @@ class Raft(aobject, AbstractRaftProtocol):
     @property
     def quorum(self) -> int:
         return math.floor(self.membership / 2) + 1
+
+    @property
+    def configuration(self) -> Set[RaftId]:
+        """Return the current cluster membership (peers, excluding self)."""
+        return set(self.__configuration)

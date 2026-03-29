@@ -3,6 +3,9 @@ from typing import NewType, Type, TypeVar
 
 RaftId = NewType("RaftId", str)
 
+CONF_CHANGE_ADD: str = "__CONF_ADD__"
+CONF_CHANGE_REMOVE: str = "__CONF_REMOVE__"
+
 
 class RaftState(enum.Enum):
     FOLLOWER = 0

@@ -1,5 +1,6 @@
 import abc
 import asyncio
+import json
 import sqlite3
 from typing import List, Optional, Tuple
 
@@ -66,6 +67,16 @@ class Storage(abc.ABC):
         ...
 
     @abc.abstractmethod
+    async def save_configuration(self, peers: List[str]) -> None:
+        """Persist the current cluster configuration (peer addresses)."""
+        ...
+
+    @abc.abstractmethod
+    async def load_configuration(self) -> Optional[List[str]]:
+        """Load the persisted cluster configuration, or None if not saved."""
+        ...
+
+    @abc.abstractmethod
     async def compact_log_with_snapshot(
         self,
         last_included_index: int,
@@ -89,6 +100,7 @@ class MemoryStorage(Storage):
         self._voted_for: Optional[str] = None
         self._logs: List[raft_pb2.Log] = []
         self._snapshot: Optional[Tuple[int, int, bytes]] = None
+        self._configuration: Optional[List[str]] = None
 
     async def save_term(self, term: int) -> None:
         self._term = term
@@ -127,6 +139,12 @@ class MemoryStorage(Storage):
 
     async def load_snapshot(self) -> Optional[Tuple[int, int, bytes]]:
         return self._snapshot
+
+    async def save_configuration(self, peers: List[str]) -> None:
+        self._configuration = list(peers)
+
+    async def load_configuration(self) -> Optional[List[str]]:
+        return list(self._configuration) if self._configuration is not None else None
 
     async def compact_log_with_snapshot(
         self,
@@ -348,3 +366,27 @@ class SQLiteStorage(Storage):
         except Exception:
             self._conn.rollback()
             raise
+
+    # -- configuration --
+
+    async def save_configuration(self, peers: List[str]) -> None:
+        await asyncio.to_thread(self._save_configuration_sync, peers)
+
+    def _save_configuration_sync(self, peers: List[str]) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO raft_state (key, value) VALUES ('configuration', ?)",
+            (json.dumps(sorted(peers)),),
+        )
+        self._conn.commit()
+
+    async def load_configuration(self) -> Optional[List[str]]:
+        return await asyncio.to_thread(self._load_configuration_sync)
+
+    def _load_configuration_sync(self) -> Optional[List[str]]:
+        cursor = self._conn.execute(
+            "SELECT value FROM raft_state WHERE key = 'configuration'"
+        )
+        row = cursor.fetchone()
+        if row and row[0] is not None:
+            return json.loads(row[0])
+        return None

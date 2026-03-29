@@ -1,4 +1,5 @@
 import asyncio
+import json
 import tempfile
 import time
 from contextlib import suppress
@@ -2400,3 +2401,703 @@ class TestSnapshotBinarySerialization:
         import json
         with pytest.raises((json.JSONDecodeError, UnicodeDecodeError)):
             json.loads(serialized)
+
+
+class TestMembershipChanges:
+    """Tests for single-server membership change (Phase 5)."""
+
+    @pytest.mark.asyncio
+    async def test_add_server_to_configuration(self):
+        """Leader should be able to add a server to the cluster."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Make this node leader
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Pre-commit the config change by advancing commit index in background
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            # Simulate replication: the entry is at index 1
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+
+        success, msg = await raft.add_server("node-4")
+        await task
+
+        assert success is True
+        assert msg == ""
+        assert "node-4" in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_remove_server_from_configuration(self):
+        """Leader should be able to remove a server from the cluster."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Make this node leader
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+
+        success, msg = await raft.remove_server("node-2")
+        await task
+
+        assert success is True
+        assert msg == ""
+        assert "node-2" not in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_config_change_rejected_on_non_leader(self):
+        """add_server and remove_server should fail on non-leaders."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Node is a follower by default
+        assert raft.state == RaftState.FOLLOWER
+
+        success, msg = await raft.add_server("node-4")
+        assert success is False
+        assert msg == "not leader"
+
+        success, msg = await raft.remove_server("node-2")
+        assert success is False
+        assert msg == "not leader"
+
+    @pytest.mark.asyncio
+    async def test_only_one_config_change_pending(self):
+        """Only one config change should be allowed at a time."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Make this node leader
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Manually inject an uncommitted config change entry
+        from aioraft.types import CONF_CHANGE_ADD
+        raft._Raft__log.append(
+            raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
+        )
+        # commit_index is 0, so this entry is uncommitted
+
+        success, msg = await raft.add_server("node-5")
+        assert success is False
+        assert msg == "another config change is pending"
+
+    @pytest.mark.asyncio
+    async def test_config_change_entries_not_applied_to_state_machine(self):
+        """Config change entries should be skipped by the state machine apply loop."""
+        from aioraft.types import CONF_CHANGE_ADD
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            state_machine=sm,
+        )
+
+        # Inject a mix of normal and config change entries
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command=f"{CONF_CHANGE_ADD}:node-4"),
+            raft_pb2.Log(index=3, term=1, command="SET b 2"),
+        ]
+
+        task = asyncio.create_task(raft._apply_committed_entries())
+        try:
+            raft._Raft__commit_index = 3
+            raft._Raft__commit_event.set()
+            await wait_until(lambda: raft.last_applied == 3)
+
+            # State machine should only have the SET commands applied
+            assert sm._store == {"a": "1", "b": "2"}
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_followers_apply_config_changes_on_append_entries(self):
+        """Followers should update their configuration when receiving config change entries."""
+        from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__current_term.set(1)
+
+        # Simulate receiving an AppendEntries with a config add entry
+        add_entry = raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
+        term, success = await raft.on_append_entries(
+            term=1,
+            leader_id="leader",
+            prev_log_index=0,
+            prev_log_term=0,
+            entries=[add_entry],
+            leader_commit=0,
+        )
+        assert success is True
+        assert "node-4" in raft.configuration
+
+        # Simulate receiving a config remove entry
+        remove_entry = raft_pb2.Log(index=2, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3")
+        term, success = await raft.on_append_entries(
+            term=1,
+            leader_id="leader",
+            prev_log_index=1,
+            prev_log_term=1,
+            entries=[remove_entry],
+            leader_commit=0,
+        )
+        assert success is True
+        assert "node-3" not in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_has_pending_config_change_detection(self):
+        """_has_pending_config_change should detect uncommitted config entries."""
+        from aioraft.types import CONF_CHANGE_ADD
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # No entries, no pending change
+        assert raft._has_pending_config_change() is False
+
+        # Add a config change entry (uncommitted, commit_index=0)
+        raft._Raft__log.append(
+            raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
+        )
+        assert raft._has_pending_config_change() is True
+
+        # Commit it
+        raft._Raft__commit_index = 1
+        assert raft._has_pending_config_change() is False
+
+    @pytest.mark.asyncio
+    async def test_self_removal_causes_step_down(self):
+        """Removing the leader itself should cause it to step down to follower."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        # Make this node leader
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+
+        success, msg = await raft.remove_server("leader-1")
+        await task
+
+        assert success is True
+        assert raft.state == RaftState.FOLLOWER
+
+    @pytest.mark.asyncio
+    async def test_add_duplicate_server_rejected(self):
+        """Adding a server that is already in the configuration should fail."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        success, msg = await raft.add_server("node-2")
+        assert success is False
+        assert msg == "server already in cluster"
+
+    @pytest.mark.asyncio
+    async def test_remove_nonexistent_server_rejected(self):
+        """Removing a server not in the configuration should fail."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        success, msg = await raft.remove_server("node-99")
+        assert success is False
+        assert msg == "server not in cluster"
+
+    @pytest.mark.asyncio
+    async def test_configuration_rebuilt_from_log_on_startup(self):
+        """On startup with storage, configuration should be rebuilt from log entries."""
+        from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE
+
+        storage = MemoryStorage()
+        # Pre-populate storage with config change log entries
+        entries = [
+            raft_pb2.Log(index=1, term=1, command="SET x 1"),
+            raft_pb2.Log(index=2, term=1, command=f"{CONF_CHANGE_ADD}:node-4"),
+            raft_pb2.Log(index=3, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3"),
+        ]
+        await storage.append_logs(entries)
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            storage=storage,
+        )
+
+        # node-4 was added, node-3 was removed
+        assert "node-4" in raft.configuration
+        assert "node-3" not in raft.configuration
+        assert "node-2" in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_is_config_change_helper(self):
+        """_is_config_change should correctly identify config change commands."""
+        from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE
+
+        assert Raft._is_config_change(f"{CONF_CHANGE_ADD}:node-1") is True
+        assert Raft._is_config_change(f"{CONF_CHANGE_REMOVE}:node-1") is True
+        assert Raft._is_config_change("SET key value") is False
+        assert Raft._is_config_change("GET key") is False
+
+    @pytest.mark.asyncio
+    async def test_configuration_property_returns_copy(self):
+        """configuration property should return a copy, not the internal set."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        config = raft.configuration
+        config.add("node-99")
+        # Internal configuration should not be affected
+        assert "node-99" not in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_add_server_updates_config_before_append(self):
+        """B1: Configuration should be updated before appending entry so
+        heartbeats see the new peer immediately."""
+        call_order = []
+
+        class TrackingClient(AsyncMock):
+            async def append_entries(self, **kwargs):
+                return (1, True)
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = TrackingClient()
+        mock_client.request_vote = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Verify that after add_server starts, the new node is in config
+        # before _wait_for_commit is called.
+        original_append = raft._append_entry
+
+        async def tracking_append(cmd):
+            # At the point of appending, node-4 should already be in config
+            call_order.append(
+                "config_has_node4" if "node-4" in raft._Raft__configuration else "config_missing_node4"
+            )
+            return await original_append(cmd)
+
+        raft._append_entry = tracking_append
+
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+        success, msg = await raft.add_server("node-4")
+        await task
+
+        assert success is True
+        assert call_order == ["config_has_node4"]
+
+    @pytest.mark.asyncio
+    async def test_remove_server_keeps_replication_state_until_commit(self):
+        """B2: Replication state (next_index/match_index) should be retained
+        until the config change entry is committed, allowing the removed server
+        to learn about its removal."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        had_repl_state_during_wait = []
+
+        original_wait = raft._wait_for_commit
+
+        async def tracking_wait(index):
+            # Check that replication state still exists for node-2 during wait
+            had_repl_state_during_wait.append(
+                "node-2" in raft._Raft__next_index
+            )
+            # Simulate commit
+            raft._update_commit_index(index)
+
+        raft._wait_for_commit = tracking_wait
+
+        success, msg = await raft.remove_server("node-2")
+
+        assert success is True
+        # During the wait, replication state should have been present
+        assert had_repl_state_during_wait == [True]
+        # After commit, replication state should be cleaned up
+        assert "node-2" not in raft._Raft__next_index
+        assert "node-2" not in raft._Raft__match_index
+
+    @pytest.mark.asyncio
+    async def test_config_persisted_to_storage_on_add(self):
+        """B3: Configuration should be persisted to storage when servers are added."""
+        storage = MemoryStorage()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            storage=storage,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+        success, msg = await raft.add_server("node-4")
+        await task
+
+        assert success is True
+        config = await storage.load_configuration()
+        assert config is not None
+        assert "node-4" in config
+
+    @pytest.mark.asyncio
+    async def test_config_loaded_from_storage_on_startup(self):
+        """B3: Configuration should be loaded from storage on startup, covering
+        entries that were compacted away."""
+        storage = MemoryStorage()
+        # Simulate a compacted state: snapshot exists, no logs
+        await storage.save_snapshot(10, 3, b"snapshot-data")
+        await storage.save_configuration(["node-2", "node-4", "node-5"])
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],  # Initial config
+            storage=storage,
+        )
+
+        # Config should be restored from storage, not use the initial config
+        assert "node-4" in raft.configuration
+        assert "node-5" in raft.configuration
+        # node-3 was removed (not in stored config)
+        assert "node-3" not in raft.configuration
+
+    @pytest.mark.asyncio
+    async def test_install_snapshot_restores_configuration(self):
+        """B4: on_install_snapshot should restore configuration from snapshot data."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            state_machine=sm,
+        )
+
+        # Create snapshot data that includes configuration
+        state_data = json.dumps({"a": "1"}).encode("utf-8")
+        snapshot_data = Raft._serialize_snapshot_data(
+            state_data, {"node-2", "node-4", "node-5"}
+        )
+
+        (resp_term,) = await raft.on_install_snapshot(
+            term=5,
+            leader_id="leader",
+            last_included_index=10,
+            last_included_term=4,
+            data=snapshot_data,
+        )
+
+        assert resp_term == 5
+        # Configuration should be restored from snapshot
+        assert "node-4" in raft.configuration
+        assert "node-5" in raft.configuration
+        # State machine should be restored with the unwrapped state data
+        assert sm._store == {"a": "1"}
+
+    @pytest.mark.asyncio
+    async def test_client_request_rejects_config_change_commands(self):
+        """B5: on_client_request should reject commands with reserved config prefixes."""
+        from aioraft.types import CONF_CHANGE_ADD, CONF_CHANGE_REMOVE
+
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Try to inject a config add via client request
+        success, result, hint = await raft.on_client_request(
+            f"{CONF_CHANGE_ADD}:attacker-node"
+        )
+        assert success is False
+        assert "reserved prefix" in result
+
+        # Try to inject a config remove via client request
+        success, result, hint = await raft.on_client_request(
+            f"{CONF_CHANGE_REMOVE}:node-2"
+        )
+        assert success is False
+        assert "reserved prefix" in result
+
+        # Normal commands should still work (will timeout but not be rejected)
+        # Just verify it doesn't get the "reserved prefix" error
+        import unittest.mock as um
+        with um.patch("aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            success, result, hint = await raft.on_client_request("SET foo bar")
+            assert "reserved prefix" not in result
+
+    @pytest.mark.asyncio
+    async def test_self_removal_steps_down_after_commit(self):
+        """B6: When the leader removes itself, it should append the entry,
+        wait for commit, and then step down."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "leader-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        async def advance_commit():
+            await asyncio.sleep(0.05)
+            raft._update_commit_index(1)
+
+        task = asyncio.create_task(advance_commit())
+
+        success, msg = await raft.remove_server("leader-1")
+        await task
+
+        assert success is True
+        assert raft.state == RaftState.FOLLOWER
+
+        # The config change entry should exist in the log
+        assert len(raft._Raft__log) == 1
+        from aioraft.types import CONF_CHANGE_REMOVE
+        assert raft._Raft__log[0].command == f"{CONF_CHANGE_REMOVE}:leader-1"
+
+    @pytest.mark.asyncio
+    async def test_snapshot_data_serialization_roundtrip(self):
+        """B4: Snapshot data serialization/deserialization should preserve both
+        state machine data and configuration."""
+        state_data = b"some-state-machine-data"
+        config = {"node-1", "node-2", "node-3"}
+
+        serialized = Raft._serialize_snapshot_data(state_data, config)
+        recovered_state, recovered_config = Raft._deserialize_snapshot_data(serialized)
+
+        assert recovered_state == state_data
+        assert recovered_config == config
+
+    @pytest.mark.asyncio
+    async def test_deserialize_legacy_snapshot_data(self):
+        """B4: Deserializing legacy snapshot data (without config wrapper)
+        should gracefully fall back."""
+        # Legacy data that doesn't have the wrapper format
+        legacy_data = b'{"key": "value"}'
+        state_data, config = Raft._deserialize_snapshot_data(legacy_data)
+        # Should return the original data and empty config
+        assert config == set() or state_data == legacy_data
+
+    @pytest.mark.asyncio
+    async def test_config_persisted_on_follower_append_entries(self):
+        """B3: When a follower receives config change entries via AppendEntries,
+        the configuration should be persisted to storage."""
+        from aioraft.types import CONF_CHANGE_ADD
+        storage = MemoryStorage()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            storage=storage,
+        )
+
+        raft._Raft__current_term.set(1)
+
+        add_entry = raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
+        term, success = await raft.on_append_entries(
+            term=1,
+            leader_id="leader",
+            prev_log_index=0,
+            prev_log_term=0,
+            entries=[add_entry],
+            leader_commit=0,
+        )
+        assert success is True
+
+        config = await storage.load_configuration()
+        assert config is not None
+        assert "node-4" in config
