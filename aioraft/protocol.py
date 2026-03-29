@@ -120,6 +120,22 @@ class AbstractRaftProtocol(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
+    async def on_read_request(self, query: str) -> tuple[bool, str, str | None]:
+        """Handle a read-only query request.
+
+        Uses leader lease if valid to serve reads without going through the log.
+        Falls back to on_client_request if the lease has expired.
+
+        Returns
+        -------
+        :param bool success: True if the query was served
+        :param str result: result of the query (or error message)
+        :param Optional[str] leader_hint: address of current leader if not the leader
+        -------
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
     async def on_install_snapshot(
         self,
         *,
