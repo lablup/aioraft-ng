@@ -141,6 +141,12 @@ class Raft(aobject, AbstractRaftProtocol):
                         await self._wait_for_election_timeout()
                     case RaftState.CANDIDATE:
                         while self.__state is RaftState.CANDIDATE:
+                            # Pre-vote phase: only proceed to a real election
+                            # if a majority would grant their vote.
+                            if not await self._start_pre_vote():
+                                await self._reset_election_timeout()
+                                await asyncio.sleep(self.__election_timeout)
+                                continue
                             await self._start_election()
                             await self._reset_election_timeout()
                             if self.has_leadership():
@@ -239,6 +245,46 @@ class Raft(aobject, AbstractRaftProtocol):
                 await callback(next_state)
             elif inspect.isfunction(callback):
                 callback(next_state)
+
+    async def _start_pre_vote(self) -> bool:
+        """Run pre-vote phase (Raft dissertation section 9.6).
+
+        Sends PreVote RPCs to all peers with a prospective term of
+        currentTerm + 1.  Returns True if a majority (including self)
+        would grant their vote, meaning a real election is likely to
+        succeed.  This avoids unnecessary term increments by
+        partitioned or lagging nodes.
+        """
+        prospective_term = self.__current_term.value + 1
+        last_log_index, last_log_term = self._get_last_log_info()
+
+        if not self.__configuration:
+            # Single-node cluster: pre-vote trivially succeeds.
+            return True
+
+        results = await asyncio.gather(
+            *[
+                asyncio.create_task(
+                    self.__client.pre_vote(
+                        to=server,
+                        term=prospective_term,
+                        candidate_id=self.id,
+                        last_log_index=last_log_index,
+                        last_log_term=last_log_term,
+                    ),
+                )
+                for server in self.__configuration
+            ]
+        )
+
+        for term, _ in results:
+            if term > self.current_term:
+                await self.__synchronize_term(term)
+                return False
+
+        grants = sum(1 for _, granted in results if granted)
+        # +1 counts self (we would vote for ourselves)
+        return grants + 1 >= self.quorum
 
     async def _start_election(self) -> None:
         new_term = self.__current_term.value + 1
@@ -705,6 +751,39 @@ class Raft(aobject, AbstractRaftProtocol):
                 term,
             )
             return (self.current_term, False)
+
+    async def on_pre_vote(
+        self,
+        *,
+        term: int,
+        candidate_id: RaftId,
+        last_log_index: int,
+        last_log_term: int,
+    ) -> tuple[int, bool]:
+        """PreVote handler (Raft dissertation section 9.6).
+
+        Responds based on whether we *would* vote for the candidate,
+        without actually granting a vote, updating our term, or
+        resetting our election timer.
+        """
+        current_term = self.current_term
+
+        # Reject if the prospective term is behind our current term
+        if term < current_term:
+            return (current_term, False)
+
+        # Reject if we have a current leader (haven't timed out)
+        if self.__leader_id is not None and self.__heartbeat_event.is_set():
+            return (current_term, False)
+
+        # Check if the candidate's log is at least as up-to-date as ours
+        my_last_index, my_last_term = self._get_last_log_info()
+        if last_log_term < my_last_term:
+            return (current_term, False)
+        if last_log_term == my_last_term and last_log_index < my_last_index:
+            return (current_term, False)
+
+        return (current_term, True)
 
     async def _apply_committed_entries(self) -> None:
         """Background task: apply committed entries to state machine."""

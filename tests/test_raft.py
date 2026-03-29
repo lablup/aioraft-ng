@@ -3888,3 +3888,384 @@ async def test_grpc_client_retry_on_connection_error():
     # Should have called _get_channel at least twice (initial + retry)
     assert call_count >= 2, "Expected retry on connection error"
     assert success is False
+
+
+# ---------------------------------------------------------------------------
+# Pre-vote protocol tests (Raft dissertation section 9.6)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_succeeds_with_up_to_date_log():
+    """PreVote should succeed when the candidate's log is at least as
+    up-to-date as the receiver's."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-2",
+        last_log_index=0,
+        last_log_term=0,
+    )
+    assert granted is True
+    assert term == 3
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_fails_with_stale_term():
+    """PreVote should be rejected when the prospective term is less than
+    the receiver's current term."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(5)
+
+    term, granted = await raft.on_pre_vote(
+        term=3,
+        candidate_id="node-2",
+        last_log_index=10,
+        last_log_term=3,
+    )
+    assert granted is False
+    assert term == 5
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_fails_with_stale_log():
+    """PreVote should be rejected when the candidate's log is less
+    up-to-date than the receiver's."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    # Give the receiver a log entry at term 3
+    raft._Raft__log = [raft_pb2.Log(index=1, term=3, command="SET x 1")]
+
+    # Candidate has older log term
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-2",
+        last_log_index=1,
+        last_log_term=2,
+    )
+    assert granted is False
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_fails_with_shorter_log_same_term():
+    """PreVote should be rejected when candidate has same last log term
+    but shorter log."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    raft._Raft__log = [
+        raft_pb2.Log(index=1, term=3, command="SET x 1"),
+        raft_pb2.Log(index=2, term=3, command="SET y 2"),
+    ]
+
+    # Candidate has same term but shorter log
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-2",
+        last_log_index=1,
+        last_log_term=3,
+    )
+    assert granted is False
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_does_not_modify_state():
+    """PreVote must NOT update term, votedFor, or reset the election timer."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    raft._Raft__voted_for = None
+    raft._Raft__heartbeat_event.clear()
+
+    term, granted = await raft.on_pre_vote(
+        term=5,
+        candidate_id="node-2",
+        last_log_index=0,
+        last_log_term=0,
+    )
+
+    assert granted is True
+    # Term must NOT have been updated
+    assert raft.current_term == 3
+    # votedFor must NOT have been set
+    assert raft.voted_for is None
+    # Election timer must NOT have been reset (heartbeat event stays clear)
+    assert not raft._heartbeat_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_failure_prevents_real_election():
+    """When pre-vote fails, _start_election should NOT be called and
+    the term should NOT be incremented."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+    # Pre-vote returns failure
+    mock_client.pre_vote = AsyncMock(return_value=(1, False))
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(1)
+
+    result = await raft._start_pre_vote()
+    assert result is False
+
+    # Term must not have changed
+    assert raft.current_term == 1
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_success_allows_real_election():
+    """When pre-vote succeeds, the subsequent real election should
+    proceed and increment the term."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+    # Pre-vote returns success from both peers
+    mock_client.pre_vote = AsyncMock(return_value=(1, True))
+    # Real election also succeeds
+    mock_client.request_vote = AsyncMock(return_value=(2, True))
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(1)
+
+    pre_vote_ok = await raft._start_pre_vote()
+    assert pre_vote_ok is True
+
+    # Now run the real election
+    await raft._start_election()
+    # Term should have been incremented by the real election
+    assert raft.current_term == 2
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_uses_prospective_term():
+    """PreVote RPCs should use currentTerm + 1 as the prospective term,
+    not the actual current term."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+    mock_client.pre_vote = AsyncMock(return_value=(3, True))
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2"],
+    )
+    raft._Raft__current_term.set(3)
+
+    await raft._start_pre_vote()
+
+    # Verify the RPC was called with term=4 (prospective term)
+    mock_client.pre_vote.assert_called_once()
+    call_kwargs = mock_client.pre_vote.call_args[1]
+    assert call_kwargs["term"] == 4
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_single_node_cluster():
+    """A single-node cluster should trivially pass pre-vote."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=[],
+    )
+
+    result = await raft._start_pre_vote()
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_rejected_when_leader_is_known():
+    """PreVote should be rejected if the receiver has a current leader
+    and has recently heard from it (heartbeat event is set), per section 9.6."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    # Simulate having a known leader and a recent heartbeat
+    raft._Raft__leader_id = "node-2"
+    raft._Raft__heartbeat_event.set()
+
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-3",
+        last_log_index=0,
+        last_log_term=0,
+    )
+    assert granted is False
+    assert term == 3
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_granted_when_leader_known_but_heartbeat_expired():
+    """PreVote should be granted if the receiver has a known leader but
+    the heartbeat event is cleared (election timeout has elapsed)."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    # Leader is known but heartbeat has expired
+    raft._Raft__leader_id = "node-2"
+    raft._Raft__heartbeat_event.clear()
+
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-3",
+        last_log_index=0,
+        last_log_term=0,
+    )
+    assert granted is True
+    assert term == 3
+
+
+@pytest.mark.asyncio
+async def test_pre_vote_granted_when_no_leader_known():
+    """PreVote should be granted if the receiver has no known leader,
+    even if the heartbeat event is set."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+    raft._Raft__leader_id = None
+    raft._Raft__heartbeat_event.set()
+
+    term, granted = await raft.on_pre_vote(
+        term=4,
+        candidate_id="node-2",
+        last_log_index=0,
+        last_log_term=0,
+    )
+    assert granted is True
+    assert term == 3
+
+
+@pytest.mark.asyncio
+async def test_start_pre_vote_steps_down_on_higher_term():
+    """_start_pre_vote should step down to follower when a peer responds
+    with a higher term, instead of retrying pre-vote."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+    # Peer responds with a higher term
+    mock_client.pre_vote = AsyncMock(return_value=(10, False))
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+
+    result = await raft._start_pre_vote()
+    assert result is False
+    # Term should have been updated to the higher term
+    assert raft.current_term == 10
+    # Should have stepped down to follower
+    assert raft.state == RaftState.FOLLOWER
+
+
+@pytest.mark.asyncio
+async def test_start_pre_vote_ignores_equal_or_lower_terms():
+    """_start_pre_vote should NOT step down when peers respond with
+    equal or lower terms."""
+    mock_server = MagicMock()
+    mock_server.bind = MagicMock()
+    mock_client = AsyncMock()
+    # Peers respond with same term, granting pre-vote
+    mock_client.pre_vote = AsyncMock(return_value=(3, True))
+
+    raft = await Raft.new(
+        "node-1",
+        server=mock_server,
+        client=mock_client,
+        configuration=["node-2", "node-3"],
+    )
+    raft._Raft__current_term.set(3)
+
+    result = await raft._start_pre_vote()
+    assert result is True
+    # Term should remain unchanged
+    assert raft.current_term == 3

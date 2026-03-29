@@ -34,6 +34,11 @@ class RaftServiceStub(object):
                 request_serializer=raft__pb2.InstallSnapshotRequest.SerializeToString,
                 response_deserializer=raft__pb2.InstallSnapshotResponse.FromString,
                 _registered_method=True)
+        self.PreVote = channel.unary_unary(
+                '/RaftService/PreVote',
+                request_serializer=raft__pb2.RequestVoteRequest.SerializeToString,
+                response_deserializer=raft__pb2.RequestVoteResponse.FromString,
+                _registered_method=True)
 
 
 class RaftServiceServicer(object):
@@ -63,6 +68,12 @@ class RaftServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PreVote(self, request, context):
+        """PreVote RPC (Raft dissertation section 9.6)."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_RaftServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -85,6 +96,11 @@ def add_RaftServiceServicer_to_server(servicer, server):
                     servicer.InstallSnapshot,
                     request_deserializer=raft__pb2.InstallSnapshotRequest.FromString,
                     response_serializer=raft__pb2.InstallSnapshotResponse.SerializeToString,
+            ),
+            'PreVote': grpc.unary_unary_rpc_method_handler(
+                    servicer.PreVote,
+                    request_deserializer=raft__pb2.RequestVoteRequest.FromString,
+                    response_serializer=raft__pb2.RequestVoteResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -195,6 +211,33 @@ class RaftService(object):
             '/RaftService/InstallSnapshot',
             raft__pb2.InstallSnapshotRequest.SerializeToString,
             raft__pb2.InstallSnapshotResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PreVote(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/RaftService/PreVote',
+            raft__pb2.RequestVoteRequest.SerializeToString,
+            raft__pb2.RequestVoteResponse.FromString,
             options,
             channel_credentials,
             insecure,
