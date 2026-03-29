@@ -1,8 +1,8 @@
 import argparse
 import asyncio
+from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
-from typing import Coroutine, List
 
 import tomli
 
@@ -12,7 +12,7 @@ from aioraft.server import GrpcRaftServer
 from aioraft.types import RaftState
 from aioraft.utils import build_loopback_ip
 
-_cleanup_coroutines: List[Coroutine] = []
+_cleanup_coroutines: list[Coroutine] = []
 
 
 def load_config():
@@ -32,11 +32,7 @@ async def _main():
     public_id = f"{public_ip}:{args.port}"
 
     config = load_config()
-    configuration = tuple(
-        server
-        for server in config["raft"]["configuration"]
-        if not server.endswith(str(args.port))
-    )
+    configuration = tuple(server for server in config["raft"]["configuration"] if not server.endswith(str(args.port)))
 
     async def _on_state_changed(next_state: RaftState):
         print(f"[_on_state_changed] next_state: {next_state}")
