@@ -10,8 +10,8 @@ class StateMachine(abc.ABC):
         ...
 
     async def query(self, command: str) -> Any:
-        """Read-only query against current state. Default: same as apply."""
-        return await self.apply(command)
+        """Read-only query. Must be overridden for read support."""
+        raise NotImplementedError("query() must be implemented for read-only operations")
 
     @abc.abstractmethod
     async def snapshot(self) -> bytes:
