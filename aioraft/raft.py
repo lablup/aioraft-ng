@@ -9,6 +9,7 @@ from aioraft.client import AbstractRaftClient
 from aioraft.protocol import AbstractRaftProtocol
 from aioraft.protos import raft_pb2
 from aioraft.server import AbstractRaftServer
+from aioraft.state_machine import StateMachine
 from aioraft.types import RaftId, RaftState, aobject
 from aioraft.utils import AtomicInteger, randrangef
 
@@ -58,6 +59,7 @@ class Raft(aobject, AbstractRaftProtocol):
         client: AbstractRaftClient,
         configuration: Iterable[RaftId],
         on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
+        state_machine: Optional[StateMachine] = None,
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
@@ -67,6 +69,7 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__on_state_changed: Optional[
             Callable[[RaftState], Awaitable]
         ] = on_state_changed
+        self.__state_machine: Optional[StateMachine] = state_machine
 
         self.__state: RaftState = RaftState.FOLLOWER
         self.__heartbeat_timeout: Final[float] = 0.1
@@ -80,31 +83,37 @@ class Raft(aobject, AbstractRaftProtocol):
         await self._initialize_persistent_state()
         await self._initialize_volatile_state()
 
+        self.__commit_event = asyncio.Event()
+
         await self.__change_state(RaftState.FOLLOWER)
         await self.__reset_timeout()
         await self._reset_election_timeout()
 
     async def main(self) -> None:
-        while True:
-            match self.__state:
-                case RaftState.FOLLOWER:
-                    await self.__reset_timeout()
-                    await self._wait_for_election_timeout()
-                case RaftState.CANDIDATE:
-                    while self.__state is RaftState.CANDIDATE:
-                        await self._start_election()
-                        await self._reset_election_timeout()
-                        if self.has_leadership():
-                            await self._initialize_leader_volatile_state()
-                            break
-                        await asyncio.sleep(self.__election_timeout)
-                case RaftState.LEADER:
-                    logging.info(
-                        f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})"
-                    )
-                    while self.has_leadership():
-                        await self._publish_heartbeat()
-                        await asyncio.sleep(self.__heartbeat_timeout)
+        apply_task = asyncio.create_task(self._apply_committed_entries())
+        try:
+            while True:
+                match self.__state:
+                    case RaftState.FOLLOWER:
+                        await self.__reset_timeout()
+                        await self._wait_for_election_timeout()
+                    case RaftState.CANDIDATE:
+                        while self.__state is RaftState.CANDIDATE:
+                            await self._start_election()
+                            await self._reset_election_timeout()
+                            if self.has_leadership():
+                                await self._initialize_leader_volatile_state()
+                                break
+                            await asyncio.sleep(self.__election_timeout)
+                    case RaftState.LEADER:
+                        logging.info(
+                            f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})"
+                        )
+                        while self.has_leadership():
+                            await self._publish_heartbeat()
+                            await asyncio.sleep(self.__heartbeat_timeout)
+        finally:
+            apply_task.cancel()
 
     async def _initialize_persistent_state(self) -> None:
         """Persistent state on all servers
@@ -260,6 +269,9 @@ class Raft(aobject, AbstractRaftProtocol):
             return (current_term, False)
         await self.__reset_timeout()
         await self.__synchronize_term(term)
+        if leader_commit > self.__commit_index:
+            self.__commit_index = min(leader_commit, len(self.__log))
+            self.__commit_event.set()
         return (self.current_term, True)
 
     async def on_request_vote(
@@ -291,6 +303,43 @@ class Raft(aobject, AbstractRaftProtocol):
             )
             return (self.current_term, False)
 
+    async def _apply_committed_entries(self) -> None:
+        """Background task: apply committed entries to state machine."""
+        while True:
+            while self.__last_applied < self.__commit_index:
+                # Entry is marked applied before execution. If apply() fails,
+                # the entry is skipped to maintain consistency with peers
+                # (all nodes apply the same sequence).
+                self.__last_applied += 1
+                entry = self._log_at_index(self.__last_applied)
+                if entry and self.__state_machine:
+                    try:
+                        await self.__state_machine.apply(entry.command)
+                    except Exception as e:
+                        log.error(f"Failed to apply entry {self.__last_applied}: {e}")
+            self.__commit_event.clear()
+            # Re-check after clearing to avoid race where a set() between
+            # the end of the drain loop and clear() would be lost.
+            if self.__last_applied < self.__commit_index:
+                continue
+            await self.__commit_event.wait()
+
+    def _update_commit_index(self, n: int) -> None:
+        """Advance commitIndex to n and wake the apply loop.
+
+        Called by the leader when a majority of matchIndex[i] >= n and
+        log[n].term == currentTerm (Raft paper §5.3/§5.4).
+        """
+        if n > self.__commit_index:
+            self.__commit_index = n
+            self.__commit_event.set()
+
+    def _log_at_index(self, index: int) -> Optional[raft_pb2.Log]:
+        """Return the log entry at the given 1-based index, or None."""
+        if 1 <= index <= len(self.__log):
+            return self.__log[index - 1]
+        return None
+
     @property
     def id(self) -> RaftId:
         return self.__id
@@ -306,6 +355,10 @@ class Raft(aobject, AbstractRaftProtocol):
     @property
     def commit_index(self) -> int:
         return self.__commit_index
+
+    @property
+    def last_applied(self) -> int:
+        return self.__last_applied
 
     @property
     def state(self) -> RaftState:
