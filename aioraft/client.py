@@ -1,6 +1,6 @@
 import abc
 import asyncio
-from typing import Iterable, Optional, Tuple
+from collections.abc import Iterable
 
 import grpc
 
@@ -19,7 +19,7 @@ class AbstractRaftClient(abc.ABC):
         last_included_index: int,
         last_included_term: int,
         data: bytes,
-    ) -> Tuple[int]:
+    ) -> tuple[int]:
         """Send InstallSnapshot RPC to a follower.
 
         Returns
@@ -40,7 +40,7 @@ class AbstractRaftClient(abc.ABC):
         prev_log_term: int,
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         """Invoked by leader to replicate log entries; also used as heartbeat.
 
         Arguments
@@ -72,7 +72,7 @@ class AbstractRaftClient(abc.ABC):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         """Invoked by candidates to gather votes.
 
         Arguments
@@ -98,8 +98,8 @@ class GrpcRaftClient(AbstractRaftClient):
     A gRPC-based implementation of `AbstractRaftClient`.
     """
 
-    def __init__(self, credentials: Optional[grpc.ChannelCredentials] = None):
-        self.__credentials: Optional[grpc.ChannelCredentials] = credentials
+    def __init__(self, credentials: grpc.ChannelCredentials | None = None):
+        self.__credentials: grpc.ChannelCredentials | None = credentials
 
     async def append_entries(
         self,
@@ -112,7 +112,7 @@ class GrpcRaftClient(AbstractRaftClient):
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
         timeout: float = 5.0,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         request = raft_pb2.AppendEntriesRequest(
             term=term,
             leader_id=leader_id,
@@ -124,13 +124,11 @@ class GrpcRaftClient(AbstractRaftClient):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(
-                    stub.AppendEntries(request), timeout=timeout
-                )
+                response = await asyncio.wait_for(stub.AppendEntries(request), timeout=timeout)
                 return response.term, response.success
             except grpc.aio.AioRpcError:
                 pass
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise
@@ -145,7 +143,7 @@ class GrpcRaftClient(AbstractRaftClient):
         last_log_index: int,
         last_log_term: int,
         timeout: float = 5.0,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         request = raft_pb2.RequestVoteRequest(
             term=term,
             candidate_id=candidate_id,
@@ -155,13 +153,11 @@ class GrpcRaftClient(AbstractRaftClient):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(
-                    stub.RequestVote(request), timeout=timeout
-                )
+                response = await asyncio.wait_for(stub.RequestVote(request), timeout=timeout)
                 return response.term, response.vote_granted
             except grpc.aio.AioRpcError:
                 pass
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise
@@ -177,7 +173,7 @@ class GrpcRaftClient(AbstractRaftClient):
         last_included_term: int,
         data: bytes,
         timeout: float = 5.0,
-    ) -> Tuple[int]:
+    ) -> tuple[int]:
         request = raft_pb2.InstallSnapshotRequest(
             term=term,
             leader_id=leader_id,
@@ -188,13 +184,11 @@ class GrpcRaftClient(AbstractRaftClient):
         async with self.__create_channel(to) as channel:
             stub = raft_pb2_grpc.RaftServiceStub(channel)
             try:
-                response = await asyncio.wait_for(
-                    stub.InstallSnapshot(request), timeout=timeout
-                )
+                response = await asyncio.wait_for(stub.InstallSnapshot(request), timeout=timeout)
                 return (response.term,)
             except grpc.aio.AioRpcError:
                 pass
-            except (asyncio.CancelledError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
             except Exception:
                 raise

@@ -36,7 +36,7 @@ async def test_raft_leader_election():
             client=GrpcRaftClient(),
             configuration=filter(lambda x: x != addr, configuration),
         )
-        for i, (server, addr) in enumerate(zip(servers, configuration))
+        for i, (server, addr) in enumerate(zip(servers, configuration, strict=False))
     ]
     assert all(map(lambda r: not r.has_leadership(), raft_nodes))
 
@@ -56,10 +56,8 @@ async def test_raft_leader_election():
     cleanup_coroutines = []
 
     raft_server_tasks = [
-        asyncio.create_task(
-            server.run(host="0.0.0.0", port=port, cleanup_coroutines=cleanup_coroutines)
-        )
-        for server, port in zip(servers, ports)
+        asyncio.create_task(server.run(host="0.0.0.0", port=port, cleanup_coroutines=cleanup_coroutines))
+        for server, port in zip(servers, ports, strict=False)
     ]
     raft_main_tasks = [asyncio.create_task(raft.main()) for raft in raft_nodes]
     done, pending = await asyncio.wait(
@@ -114,8 +112,7 @@ async def test_commit_index_preserved_across_candidate_transition():
 
     # commitIndex must still be 5, not reset to 0
     assert raft.commit_index == 5, (
-        "commitIndex was reset during candidate transition; "
-        "it should only be initialized on first boot"
+        "commitIndex was reset during candidate transition; it should only be initialized on first boot"
     )
 
 
@@ -157,8 +154,7 @@ async def test_stale_append_entries_does_not_reset_election_timer():
 
     # The heartbeat event should NOT have been set by a stale RPC
     assert not raft._heartbeat_event.is_set(), (
-        "Heartbeat event was set by a stale AppendEntries RPC; "
-        "only valid RPCs should signal the heartbeat event"
+        "Heartbeat event was set by a stale AppendEntries RPC; only valid RPCs should signal the heartbeat event"
     )
 
 
@@ -196,9 +192,7 @@ async def test_valid_append_entries_resets_election_timer():
     assert success is True
 
     # The heartbeat event should have been set by a valid RPC
-    assert (
-        raft._heartbeat_event.is_set()
-    ), "Heartbeat event was not set by a valid AppendEntries RPC"
+    assert raft._heartbeat_event.is_set(), "Heartbeat event was not set by a valid AppendEntries RPC"
 
 
 @pytest.mark.asyncio
@@ -229,9 +223,7 @@ async def test_vote_grant_resets_election_timer():
     )
 
     assert granted is True
-    assert (
-        raft._heartbeat_event.is_set()
-    ), "Heartbeat event was not set when granting a vote"
+    assert raft._heartbeat_event.is_set(), "Heartbeat event was not set when granting a vote"
 
 
 class TestStateMachine:
@@ -507,9 +499,7 @@ class TestClientRequest:
 
         repl_task = asyncio.create_task(simulate_replication())
         try:
-            success, result, leader_hint = await raft.on_client_request(
-                "SET mykey myval"
-            )
+            success, result, leader_hint = await raft.on_client_request("SET mykey myval")
             assert success is True
             # on_client_request no longer applies inline; result is empty
             assert result == ""
@@ -542,9 +532,7 @@ class TestClientRequest:
         # Patch the timeout to be very short for test speed
         import unittest.mock as um
 
-        with um.patch(
-            "aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError
-        ):
+        with um.patch("aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError):
             success, result, leader_hint = await raft.on_client_request("SET foo bar")
             assert success is False
             assert result == "lost leadership or timeout"
@@ -1781,10 +1769,7 @@ class TestLogCompaction:
         )
 
         # Inject 10 log entries
-        entries = [
-            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}")
-            for i in range(1, 11)
-        ]
+        entries = [raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}") for i in range(1, 11)]
         raft._Raft__log = entries
 
         # Apply all entries to state machine
@@ -1922,9 +1907,7 @@ class TestLogCompaction:
             snapshot_threshold=2,
         )
 
-        raft._Raft__log = [
-            raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}") for i in range(1, 6)
-        ]
+        raft._Raft__log = [raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}") for i in range(1, 6)]
         raft._Raft__last_applied = 5
         raft._Raft__commit_index = 5
 
@@ -2575,9 +2558,7 @@ class TestMembershipChanges:
         # Manually inject an uncommitted config change entry
         from aioraft.types import CONF_CHANGE_ADD
 
-        raft._Raft__log.append(
-            raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
-        )
+        raft._Raft__log.append(raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4"))
         # commit_index is 0, so this entry is uncommitted
 
         success, msg = await raft.add_server("node-5")
@@ -2654,9 +2635,7 @@ class TestMembershipChanges:
         assert "node-4" in raft.configuration
 
         # Simulate receiving a config remove entry
-        remove_entry = raft_pb2.Log(
-            index=2, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3"
-        )
+        remove_entry = raft_pb2.Log(index=2, term=1, command=f"{CONF_CHANGE_REMOVE}:node-3")
         term, success = await raft.on_append_entries(
             term=1,
             leader_id="leader",
@@ -2688,9 +2667,7 @@ class TestMembershipChanges:
         assert raft._has_pending_config_change() is False
 
         # Add a config change entry (uncommitted, commit_index=0)
-        raft._Raft__log.append(
-            raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4")
-        )
+        raft._Raft__log.append(raft_pb2.Log(index=1, term=1, command=f"{CONF_CHANGE_ADD}:node-4"))
         assert raft._has_pending_config_change() is True
 
         # Commit it
@@ -2865,11 +2842,7 @@ class TestMembershipChanges:
 
         async def tracking_append(cmd):
             # At the point of appending, node-4 should already be in config
-            call_order.append(
-                "config_has_node4"
-                if "node-4" in raft._Raft__configuration
-                else "config_missing_node4"
-            )
+            call_order.append("config_has_node4" if "node-4" in raft._Raft__configuration else "config_missing_node4")
             return await original_append(cmd)
 
         raft._append_entry = tracking_append
@@ -2907,8 +2880,6 @@ class TestMembershipChanges:
         await raft._initialize_leader_volatile_state()
 
         had_repl_state_during_wait = []
-
-        original_wait = raft._wait_for_commit
 
         async def tracking_wait(index):
             # Check that replication state still exists for node-2 during wait
@@ -3006,9 +2977,7 @@ class TestMembershipChanges:
 
         # Create snapshot data that includes configuration
         state_data = json.dumps({"a": "1"}).encode("utf-8")
-        snapshot_data = Raft._serialize_snapshot_data(
-            state_data, {"node-2", "node-4", "node-5"}
-        )
+        snapshot_data = Raft._serialize_snapshot_data(state_data, {"node-2", "node-4", "node-5"})
 
         (resp_term,) = await raft.on_install_snapshot(
             term=5,
@@ -3046,16 +3015,12 @@ class TestMembershipChanges:
         await raft._initialize_leader_volatile_state()
 
         # Try to inject a config add via client request
-        success, result, hint = await raft.on_client_request(
-            f"{CONF_CHANGE_ADD}:attacker-node"
-        )
+        success, result, hint = await raft.on_client_request(f"{CONF_CHANGE_ADD}:attacker-node")
         assert success is False
         assert "reserved prefix" in result
 
         # Try to inject a config remove via client request
-        success, result, hint = await raft.on_client_request(
-            f"{CONF_CHANGE_REMOVE}:node-2"
-        )
+        success, result, hint = await raft.on_client_request(f"{CONF_CHANGE_REMOVE}:node-2")
         assert success is False
         assert "reserved prefix" in result
 
@@ -3063,9 +3028,7 @@ class TestMembershipChanges:
         # Just verify it doesn't get the "reserved prefix" error
         import unittest.mock as um
 
-        with um.patch(
-            "aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError
-        ):
+        with um.patch("aioraft.raft.asyncio.wait_for", side_effect=asyncio.TimeoutError):
             success, result, hint = await raft.on_client_request("SET foo bar")
             assert "reserved prefix" not in result
 

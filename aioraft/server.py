@@ -1,5 +1,5 @@
 import abc
-from typing import Coroutine, List, Optional
+from collections.abc import Coroutine
 
 import grpc
 
@@ -19,9 +19,9 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
     A gRPC-based implementation of `AbstractRaftServer`.
     """
 
-    def __init__(self, credentials: Optional[grpc.ServerCredentials] = None):
-        self.__protocol: Optional[AbstractRaftProtocol] = None
-        self.__credentials: Optional[grpc.ServerCredentials] = credentials
+    def __init__(self, credentials: grpc.ServerCredentials | None = None):
+        self.__protocol: AbstractRaftProtocol | None = None
+        self.__credentials: grpc.ServerCredentials | None = credentials
 
     def bind(self, protocol: AbstractRaftProtocol):
         self.__protocol = protocol
@@ -30,7 +30,7 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         self,
         host: str = "[::]",
         port: int = 50051,
-        cleanup_coroutines: Optional[List[Coroutine]] = None,
+        cleanup_coroutines: list[Coroutine] | None = None,
     ):
         server = grpc.aio.server()
         raft_pb2_grpc.add_RaftServiceServicer_to_server(self, server)
@@ -107,9 +107,7 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
         context: grpc.aio.ServicerContext,
     ) -> raft_pb2.ClientResponseMessage:
         if (protocol := self.__protocol) is None:
-            return raft_pb2.ClientResponseMessage(
-                success=False, result="", leader_hint="", error="no protocol bound"
-            )
+            return raft_pb2.ClientResponseMessage(success=False, result="", leader_hint="", error="no protocol bound")
         success, result, leader_hint = await protocol.on_client_request(
             command=request.command,
         )

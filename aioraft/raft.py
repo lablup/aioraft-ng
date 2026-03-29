@@ -3,18 +3,9 @@ import inspect
 import json
 import logging
 import math
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
-from typing import (
-    Awaitable,
-    Callable,
-    Dict,
-    Final,
-    Iterable,
-    List,
-    Optional,
-    Set,
-    Tuple,
-)
+from typing import Final
 
 from aioraft.client import AbstractRaftClient
 from aioraft.protocol import AbstractRaftProtocol
@@ -78,25 +69,21 @@ class Raft(aobject, AbstractRaftProtocol):
         server: AbstractRaftServer,
         client: AbstractRaftClient,
         configuration: Iterable[RaftId],
-        on_state_changed: Optional[Callable[[RaftState], Awaitable]] = None,
-        state_machine: Optional[StateMachine] = None,
-        storage: Optional[Storage] = None,
-        snapshot_threshold: Optional[int] = None,
+        on_state_changed: Callable[[RaftState], Awaitable] | None = None,
+        state_machine: StateMachine | None = None,
+        storage: Storage | None = None,
+        snapshot_threshold: int | None = None,
         **kwargs,
     ):
         self.__id: Final[RaftId] = id_
         self.__server: Final[AbstractRaftServer] = server
         self.__client: Final[AbstractRaftClient] = client
-        self.__configuration: Set[RaftId] = set(configuration)
-        self.__on_state_changed: Optional[Callable[[RaftState], Awaitable]] = (
-            on_state_changed
-        )
-        self.__state_machine: Optional[StateMachine] = state_machine
-        self.__storage: Optional[Storage] = storage
+        self.__configuration: set[RaftId] = set(configuration)
+        self.__on_state_changed: Callable[[RaftState], Awaitable] | None = on_state_changed
+        self.__state_machine: StateMachine | None = state_machine
+        self.__storage: Storage | None = storage
         self.__snapshot_threshold: int = (
-            snapshot_threshold
-            if snapshot_threshold is not None
-            else self.DEFAULT_SNAPSHOT_THRESHOLD
+            snapshot_threshold if snapshot_threshold is not None else self.DEFAULT_SNAPSHOT_THRESHOLD
         )
 
         self.__state: RaftState = RaftState.FOLLOWER
@@ -105,12 +92,12 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__vote_lock = asyncio.Lock()
         self._vote_request_lock = asyncio.Lock()
 
-        self.__leader_id: Optional[RaftId] = None
+        self.__leader_id: RaftId | None = None
 
         # Persistent state (may be overwritten in __ainit__ from storage)
         self.__current_term: AtomicInteger = AtomicInteger(0)
-        self.__voted_for: Optional[RaftId] = None
-        self.__log: List[raft_pb2.Log] = []
+        self.__voted_for: RaftId | None = None
+        self.__log: list[raft_pb2.Log] = []
 
         # Snapshot metadata
         self.__last_included_index: int = 0
@@ -164,9 +151,7 @@ class Raft(aobject, AbstractRaftProtocol):
                                 break
                             await asyncio.sleep(self.__election_timeout)
                     case RaftState.LEADER:
-                        logging.info(
-                            f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})"
-                        )
+                        logging.info(f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})")
                         while self.has_leadership():
                             await self._publish_heartbeat()
                             await asyncio.sleep(self.__heartbeat_timeout)
@@ -213,12 +198,8 @@ class Raft(aobject, AbstractRaftProtocol):
             (initialized to 0, increases monotonically)
         """
         last_log_index = self.__last_included_index + len(self.__log)
-        self.__next_index: Dict[RaftId, int] = {
-            peer: last_log_index + 1 for peer in self.__configuration
-        }
-        self.__match_index: Dict[RaftId, int] = {
-            peer: 0 for peer in self.__configuration
-        }
+        self.__next_index: dict[RaftId, int] = {peer: last_log_index + 1 for peer in self.__configuration}
+        self.__match_index: dict[RaftId, int] = {peer: 0 for peer in self.__configuration}
 
     async def _reset_election_timeout(self) -> None:
         self.__election_timeout: float = randrangef(0.15, 0.3)
@@ -237,7 +218,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 )
                 # Heartbeat received — reset and wait again
                 continue
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No heartbeat within election timeout — become candidate
                 await self.__change_state(RaftState.CANDIDATE)
                 return
@@ -254,9 +235,7 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
-        log.debug(
-            f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}"
-        )
+        log.debug(f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}")
         self.__state = next_state
         if callback := self.__on_state_changed:
             if inspect.iscoroutinefunction(callback):
@@ -290,7 +269,8 @@ class Raft(aobject, AbstractRaftProtocol):
                     )
                     for server in self.__configuration
                 ]
-            )
+            ),
+            strict=False,
         )
 
         for term in terms:
@@ -314,7 +294,7 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__log.append(entry)
         return entry
 
-    async def _replicate_to_peer(self, peer_id: RaftId) -> Tuple[int, bool]:
+    async def _replicate_to_peer(self, peer_id: RaftId) -> tuple[int, bool]:
         """Send AppendEntries RPC to a single peer with entries from nextIndex onwards.
         If the peer is behind the snapshot, send InstallSnapshot instead.
 
@@ -337,9 +317,7 @@ class Raft(aobject, AbstractRaftProtocol):
             if snapshot_data is None and self.__state_machine:
                 state_data = await self.__state_machine.snapshot()
                 # B4: Include configuration in live snapshot
-                snapshot_data = self._serialize_snapshot_data(
-                    state_data, self.__configuration
-                )
+                snapshot_data = self._serialize_snapshot_data(state_data, self.__configuration)
                 snap_idx = self.__last_applied
                 entry = self._log_at_index(snap_idx)
                 snap_term = entry.term if entry else self.__last_included_term
@@ -372,9 +350,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
         # Entries from nextIndex to end of log (adjusted for snapshot offset)
         offset = next_idx - self.__last_included_index - 1
-        entries = (
-            self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
-        )
+        entries = self.__log[offset:] if offset >= 0 and offset < len(self.__log) else []
 
         term, success = await self.__client.append_entries(
             to=peer_id,
@@ -392,13 +368,10 @@ class Raft(aobject, AbstractRaftProtocol):
             return
 
         results = await asyncio.gather(
-            *[
-                asyncio.create_task(self._replicate_to_peer(server))
-                for server in self.__configuration
-            ]
+            *[asyncio.create_task(self._replicate_to_peer(server)) for server in self.__configuration]
         )
 
-        for peer_id, (term, success) in zip(self.__configuration, results):
+        for peer_id, (term, success) in zip(self.__configuration, results, strict=False):
             if term > self.current_term:
                 await self.__synchronize_term(term)
                 return
@@ -448,7 +421,7 @@ class Raft(aobject, AbstractRaftProtocol):
                 return
             try:
                 await asyncio.wait_for(self.__commit_event.wait(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue  # re-check leadership
 
     def _rebuild_configuration_from_log(self) -> None:
@@ -463,15 +436,13 @@ class Raft(aobject, AbstractRaftProtocol):
                 self.__configuration.discard(address)
 
     @staticmethod
-    def _serialize_snapshot_data(
-        state_data: bytes, configuration: Set[RaftId]
-    ) -> bytes:
+    def _serialize_snapshot_data(state_data: bytes, configuration: set[RaftId]) -> bytes:
         """Wrap state machine data with configuration metadata for snapshots."""
         meta = json.dumps({"config": sorted(configuration)}).encode()
         return len(meta).to_bytes(4, "big") + meta + state_data
 
     @staticmethod
-    def _deserialize_snapshot_data(raw: bytes) -> Tuple[bytes, Set[RaftId]]:
+    def _deserialize_snapshot_data(raw: bytes) -> tuple[bytes, set[RaftId]]:
         """Unwrap snapshot data into state machine data and configuration."""
         if len(raw) < 4:
             return raw, set()
@@ -488,21 +459,17 @@ class Raft(aobject, AbstractRaftProtocol):
     @staticmethod
     def _is_config_change(command: str) -> bool:
         """Return True if the command is a configuration change entry."""
-        return command.startswith(CONF_CHANGE_ADD) or command.startswith(
-            CONF_CHANGE_REMOVE
-        )
+        return command.startswith(CONF_CHANGE_ADD) or command.startswith(CONF_CHANGE_REMOVE)
 
     def _has_pending_config_change(self) -> bool:
         """Check if there's an uncommitted config change in the log."""
-        for i in range(
-            self.__commit_index + 1, self.__last_included_index + len(self.__log) + 1
-        ):
+        for i in range(self.__commit_index + 1, self.__last_included_index + len(self.__log) + 1):
             entry = self._log_at_index(i)
             if entry and self._is_config_change(entry.command):
                 return True
         return False
 
-    async def add_server(self, address: RaftId) -> Tuple[bool, str]:
+    async def add_server(self, address: RaftId) -> tuple[bool, str]:
         """Add a server to the cluster. Must be called on the leader."""
         if not self.has_leadership():
             return (False, "not leader")
@@ -523,11 +490,11 @@ class Raft(aobject, AbstractRaftProtocol):
         # Wait for commit
         try:
             await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
-        except (asyncio.TimeoutError, RuntimeError):
+        except (TimeoutError, RuntimeError):
             return (False, "failed to commit config change")
         return (True, "")
 
-    async def remove_server(self, address: RaftId) -> Tuple[bool, str]:
+    async def remove_server(self, address: RaftId) -> tuple[bool, str]:
         """Remove a server from the cluster. Must be called on the leader."""
         if not self.has_leadership():
             return (False, "not leader")
@@ -541,7 +508,7 @@ class Raft(aobject, AbstractRaftProtocol):
             entry = await self._append_entry(f"{CONF_CHANGE_REMOVE}:{address}")
             try:
                 await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
-            except (asyncio.TimeoutError, RuntimeError):
+            except (TimeoutError, RuntimeError):
                 return (False, "failed to commit config change")
             await self.__change_state(RaftState.FOLLOWER)
             return (True, "")
@@ -556,7 +523,7 @@ class Raft(aobject, AbstractRaftProtocol):
         # removed server receives the config change entry.
         try:
             await asyncio.wait_for(self._wait_for_commit(entry.index), timeout=10.0)
-        except (asyncio.TimeoutError, RuntimeError):
+        except (TimeoutError, RuntimeError):
             return (False, "failed to commit config change")
         # Now safe to clean up replication state after commit
         self.__next_index.pop(address, None)
@@ -570,7 +537,7 @@ class Raft(aobject, AbstractRaftProtocol):
     AbstractRaftProtocol
     """
 
-    async def on_client_request(self, command: str) -> Tuple[bool, str, Optional[str]]:
+    async def on_client_request(self, command: str) -> tuple[bool, str, str | None]:
         """Handle a client command request.
 
         Returns (success, result, leader_hint).
@@ -589,7 +556,7 @@ class Raft(aobject, AbstractRaftProtocol):
         # Wait for the entry to be committed (replicated to a majority)
         try:
             await asyncio.wait_for(self._wait_for_commit(target_index), timeout=5.0)
-        except (asyncio.TimeoutError, RuntimeError):
+        except (TimeoutError, RuntimeError):
             return (False, "lost leadership or timeout", None)
 
         # The background _apply_committed_entries loop handles applying to
@@ -605,7 +572,7 @@ class Raft(aobject, AbstractRaftProtocol):
         prev_log_term: int,
         entries: Iterable[raft_pb2.Log],
         leader_commit: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         # Rule 1: Reply false if term < currentTerm
         if term < (current_term := self.current_term):
             return (current_term, False)
@@ -630,8 +597,8 @@ class Raft(aobject, AbstractRaftProtocol):
 
         # Process entries (rules 3 & 4)
         entries_list = list(entries)
-        new_entries_to_append: List[raft_pb2.Log] = []
-        truncate_from: Optional[int] = None
+        new_entries_to_append: list[raft_pb2.Log] = []
+        truncate_from: int | None = None
 
         for i, new_entry in enumerate(entries_list):
             insert_index = prev_log_index + 1 + i
@@ -654,9 +621,7 @@ class Raft(aobject, AbstractRaftProtocol):
         # Persist before updating in-memory state
         if truncate_from is not None:
             if self.__storage:
-                await self.__storage.truncate_and_append(
-                    truncate_from, new_entries_to_append
-                )
+                await self.__storage.truncate_and_append(truncate_from, new_entries_to_append)
             adjusted = truncate_from - self.__last_included_index - 1
             self.__log = self.__log[:adjusted]
             self.__log.extend(new_entries_to_append)
@@ -699,7 +664,7 @@ class Raft(aobject, AbstractRaftProtocol):
         candidate_id: RaftId,
         last_log_index: int,
         last_log_term: int,
-    ) -> Tuple[int, bool]:
+    ) -> tuple[int, bool]:
         async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
@@ -823,7 +788,7 @@ class Raft(aobject, AbstractRaftProtocol):
         last_included_index: int,
         last_included_term: int,
         data: bytes,
-    ) -> Tuple[int]:
+    ) -> tuple[int]:
         """Handle InstallSnapshot RPC from the leader."""
         if term < self.current_term:
             return (self.current_term,)
@@ -869,7 +834,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
         return (self.current_term,)
 
-    def _get_last_log_info(self) -> Tuple[int, int]:
+    def _get_last_log_info(self) -> tuple[int, int]:
         """Return (last_log_index, last_log_term) for the local log."""
         if self.__log:
             last = self.__log[-1]
@@ -878,7 +843,7 @@ class Raft(aobject, AbstractRaftProtocol):
             return (self.__last_included_index, self.__last_included_term)
         return (0, 0)
 
-    def _log_at_index(self, index: int) -> Optional[raft_pb2.Log]:
+    def _log_at_index(self, index: int) -> raft_pb2.Log | None:
         """Return the log entry at the given 1-based index, or None.
         Accounts for snapshot offset."""
         if index <= self.__last_included_index:
@@ -897,7 +862,7 @@ class Raft(aobject, AbstractRaftProtocol):
         return self.__current_term.value
 
     @property
-    def voted_for(self) -> Optional[RaftId]:
+    def voted_for(self) -> RaftId | None:
         return self.__voted_for
 
     @property
@@ -925,6 +890,6 @@ class Raft(aobject, AbstractRaftProtocol):
         return math.floor(self.membership / 2) + 1
 
     @property
-    def configuration(self) -> Set[RaftId]:
+    def configuration(self) -> set[RaftId]:
         """Return the current cluster membership (peers, excluding self)."""
         return set(self.__configuration)

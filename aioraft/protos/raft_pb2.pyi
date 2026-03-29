@@ -1,8 +1,6 @@
+from collections.abc import Iterable as _Iterable
+from collections.abc import Mapping as _Mapping
 from typing import ClassVar as _ClassVar
-from typing import Iterable as _Iterable
-from typing import Mapping as _Mapping
-from typing import Optional as _Optional
-from typing import Union as _Union
 
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -33,12 +31,12 @@ class AppendEntriesRequest(_message.Message):
     term: int
     def __init__(
         self,
-        term: _Optional[int] = ...,
-        leader_id: _Optional[str] = ...,
-        prev_log_index: _Optional[int] = ...,
-        prev_log_term: _Optional[int] = ...,
-        entries: _Optional[_Iterable[_Union[Log, _Mapping]]] = ...,
-        leader_commit: _Optional[int] = ...,
+        term: int | None = ...,
+        leader_id: str | None = ...,
+        prev_log_index: int | None = ...,
+        prev_log_term: int | None = ...,
+        entries: _Iterable[Log | _Mapping] | None = ...,
+        leader_commit: int | None = ...,
     ) -> None: ...
 
 class AppendEntriesResponse(_message.Message):
@@ -47,7 +45,7 @@ class AppendEntriesResponse(_message.Message):
     TERM_FIELD_NUMBER: _ClassVar[int]
     success: bool
     term: int
-    def __init__(self, term: _Optional[int] = ..., success: bool = ...) -> None: ...
+    def __init__(self, term: int | None = ..., success: bool = ...) -> None: ...
 
 class Log(_message.Message):
     __slots__ = ["command", "index", "term"]
@@ -59,9 +57,9 @@ class Log(_message.Message):
     term: int
     def __init__(
         self,
-        index: _Optional[int] = ...,
-        term: _Optional[int] = ...,
-        command: _Optional[str] = ...,
+        index: int | None = ...,
+        term: int | None = ...,
+        command: str | None = ...,
     ) -> None: ...
 
 class RequestVoteRequest(_message.Message):
@@ -76,10 +74,10 @@ class RequestVoteRequest(_message.Message):
     term: int
     def __init__(
         self,
-        term: _Optional[int] = ...,
-        candidate_id: _Optional[str] = ...,
-        last_log_index: _Optional[int] = ...,
-        last_log_term: _Optional[int] = ...,
+        term: int | None = ...,
+        candidate_id: str | None = ...,
+        last_log_index: int | None = ...,
+        last_log_term: int | None = ...,
     ) -> None: ...
 
 class RequestVoteResponse(_message.Message):
@@ -88,15 +86,13 @@ class RequestVoteResponse(_message.Message):
     VOTE_GRANTED_FIELD_NUMBER: _ClassVar[int]
     term: int
     vote_granted: bool
-    def __init__(
-        self, term: _Optional[int] = ..., vote_granted: bool = ...
-    ) -> None: ...
+    def __init__(self, term: int | None = ..., vote_granted: bool = ...) -> None: ...
 
 class ClientRequestMessage(_message.Message):
     __slots__ = ["command"]
     COMMAND_FIELD_NUMBER: _ClassVar[int]
     command: str
-    def __init__(self, command: _Optional[str] = ...) -> None: ...
+    def __init__(self, command: str | None = ...) -> None: ...
 
 class ClientResponseMessage(_message.Message):
     __slots__ = ["error", "leader_hint", "result", "success"]
@@ -111,9 +107,9 @@ class ClientResponseMessage(_message.Message):
     def __init__(
         self,
         success: bool = ...,
-        result: _Optional[str] = ...,
-        leader_hint: _Optional[str] = ...,
-        error: _Optional[str] = ...,
+        result: str | None = ...,
+        leader_hint: str | None = ...,
+        error: str | None = ...,
     ) -> None: ...
 
 class InstallSnapshotRequest:
@@ -132,11 +128,11 @@ class InstallSnapshotRequest:
     ) -> None: ...
     def SerializeToString(self) -> bytes: ...
     @classmethod
-    def FromString(cls, raw: bytes) -> "InstallSnapshotRequest": ...
+    def FromString(cls, raw: bytes) -> InstallSnapshotRequest: ...
 
 class InstallSnapshotResponse:
     term: int
     def __init__(self, term: int = ...) -> None: ...
     def SerializeToString(self) -> bytes: ...
     @classmethod
-    def FromString(cls, raw: bytes) -> "InstallSnapshotResponse": ...
+    def FromString(cls, raw: bytes) -> InstallSnapshotResponse: ...
