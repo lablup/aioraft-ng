@@ -1,10 +1,9 @@
 import argparse
 import asyncio
+import tomllib
 from collections.abc import Coroutine
 from contextlib import suppress
 from pathlib import Path
-
-import tomli
 
 from aioraft import Raft
 from aioraft.client import GrpcRaftClient
@@ -17,7 +16,8 @@ _cleanup_coroutines: list[Coroutine] = []
 
 def load_config():
     path = Path(__file__).parent / "config.toml"
-    return tomli.loads(path.read_text())
+    with path.open("rb") as f:
+        return tomllib.load(f)
 
 
 def parse_args():

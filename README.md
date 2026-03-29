@@ -81,7 +81,7 @@ aioraft/
 ├── state_machine.py  # StateMachine ABC + KeyValueStateMachine
 ├── storage.py        # Storage ABC + MemoryStorage + SQLiteStorage
 ├── types.py          # RaftId, RaftState, config change constants
-├── utils.py          # AtomicInteger, helpers
+├── utils.py          # MutableInt, helpers
 └── protos/
     └── raft.proto    # Protobuf service & message definitions
 ```

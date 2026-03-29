@@ -23,7 +23,7 @@ def build_local_ip() -> str:
     return "127.0.0.1"
 
 
-class AtomicInteger:
+class MutableInt:
     """Simple mutable integer wrapper for in-place updates.
 
     Note: This is not truly atomic (no lock protection). It is safe for
@@ -34,15 +34,15 @@ class AtomicInteger:
     def __init__(self, value: int = 0):
         self.__value = value
 
-    def increase(self, value: int = 1) -> "AtomicInteger":
+    def increase(self, value: int = 1) -> "MutableInt":
         self.__value += value
         return self
 
-    def decrease(self, value: int = 1) -> "AtomicInteger":
+    def decrease(self, value: int = 1) -> "MutableInt":
         self.__value -= value
         return self
 
-    def set(self, value: int = 0) -> "AtomicInteger":
+    def set(self, value: int = 0) -> "MutableInt":
         self.__value = value
         return self
 
