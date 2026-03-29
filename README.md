@@ -37,6 +37,14 @@ uv run ruff check .
 uv run mypy aioraft/
 ```
 
+## Demo
+
+Run the full-featured demo (starts a 3-node cluster in-process):
+
+```bash
+uv run python examples/main.py
+```
+
 ## Usage
 
 ```python
