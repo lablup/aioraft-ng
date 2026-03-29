@@ -143,9 +143,9 @@ class Raft(aobject, AbstractRaftProtocol):
         await self._initialize_volatile_state()
 
         self.__commit_event = asyncio.Event()
+        self.__heartbeat_event = asyncio.Event()
 
         await self.__change_state(RaftState.FOLLOWER)
-        await self.__reset_timeout()
         await self._reset_election_timeout()
 
     async def main(self) -> None:
@@ -154,7 +154,6 @@ class Raft(aobject, AbstractRaftProtocol):
             while True:
                 match self.__state:
                     case RaftState.FOLLOWER:
-                        await self.__reset_timeout()
                         await self._wait_for_election_timeout()
                     case RaftState.CANDIDATE:
                         while self.__state is RaftState.CANDIDATE:
@@ -225,13 +224,23 @@ class Raft(aobject, AbstractRaftProtocol):
         self.__election_timeout: float = randrangef(0.15, 0.3)
 
     async def __reset_timeout(self) -> None:
-        self.__elapsed_time: float = 0.0
+        self.__heartbeat_event.set()
 
-    async def _wait_for_election_timeout(self, interval: float = 1.0 / 30) -> None:
-        while self.__elapsed_time < self.__election_timeout:
-            await asyncio.sleep(interval)
-            self.__elapsed_time += interval
-        await self.__change_state(RaftState.CANDIDATE)
+    async def _wait_for_election_timeout(self) -> None:
+        """Wait for election timeout. Returns when timeout elapses without heartbeat."""
+        while True:
+            self.__heartbeat_event.clear()
+            try:
+                await asyncio.wait_for(
+                    self.__heartbeat_event.wait(),
+                    timeout=self.__election_timeout,
+                )
+                # Heartbeat received — reset and wait again
+                continue
+            except asyncio.TimeoutError:
+                # No heartbeat within election timeout — become candidate
+                await self.__change_state(RaftState.CANDIDATE)
+                return
 
     async def __synchronize_term(self, term: int) -> None:
         if term > self.current_term:
@@ -904,8 +913,8 @@ class Raft(aobject, AbstractRaftProtocol):
         return self.__state
 
     @property
-    def _elapsed_time(self) -> float:
-        return self.__elapsed_time
+    def _heartbeat_event(self) -> asyncio.Event:
+        return self.__heartbeat_event
 
     @property
     def membership(self) -> int:

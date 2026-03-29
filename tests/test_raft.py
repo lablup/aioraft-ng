@@ -138,8 +138,8 @@ async def test_stale_append_entries_does_not_reset_election_timer():
     # Set the node's current term to 5
     raft._Raft__current_term.set(5)
 
-    # Simulate some elapsed time (as if election timer is counting down)
-    raft._Raft__elapsed_time = 0.1
+    # Clear the heartbeat event so we can observe whether it gets set
+    raft._Raft__heartbeat_event.clear()
 
     # Send an AppendEntries with a stale term (term=2 < currentTerm=5)
     current_term, success = await raft.on_append_entries(
@@ -155,17 +155,17 @@ async def test_stale_append_entries_does_not_reset_election_timer():
     assert success is False
     assert current_term == 5
 
-    # The election timer should NOT have been reset (elapsed_time stays 0.1)
-    assert raft._elapsed_time == pytest.approx(0.1), (
-        "Election timer was reset by a stale AppendEntries RPC; "
-        "only valid RPCs should reset the timer"
+    # The heartbeat event should NOT have been set by a stale RPC
+    assert not raft._heartbeat_event.is_set(), (
+        "Heartbeat event was set by a stale AppendEntries RPC; "
+        "only valid RPCs should signal the heartbeat event"
     )
 
 
 @pytest.mark.asyncio
 async def test_valid_append_entries_resets_election_timer():
     """Verify that a valid AppendEntries RPC (with current term) does
-    reset the election timer."""
+    reset the election timer by setting the heartbeat event."""
     mock_server = MagicMock()
     mock_server.bind = MagicMock()
     mock_client = AsyncMock()
@@ -180,8 +180,8 @@ async def test_valid_append_entries_resets_election_timer():
     # Set the node's current term to 5
     raft._Raft__current_term.set(5)
 
-    # Simulate some elapsed time
-    raft._Raft__elapsed_time = 0.1
+    # Clear the heartbeat event so we can observe whether it gets set
+    raft._Raft__heartbeat_event.clear()
 
     # Send an AppendEntries with a valid term (term=5 == currentTerm)
     current_term, success = await raft.on_append_entries(
@@ -195,10 +195,10 @@ async def test_valid_append_entries_resets_election_timer():
 
     assert success is True
 
-    # The election timer should have been reset (elapsed_time back to 0.0)
-    assert raft._elapsed_time == pytest.approx(
-        0.0
-    ), "Election timer was not reset by a valid AppendEntries RPC"
+    # The heartbeat event should have been set by a valid RPC
+    assert (
+        raft._heartbeat_event.is_set()
+    ), "Heartbeat event was not set by a valid AppendEntries RPC"
 
 
 class TestStateMachine:
@@ -2022,7 +2022,9 @@ class TestInstallSnapshot:
         )
 
         raft._Raft__current_term.set(1)
-        raft._Raft__elapsed_time = 0.2
+
+        # Clear the heartbeat event so we can observe whether it gets set
+        raft._Raft__heartbeat_event.clear()
 
         await raft.on_install_snapshot(
             term=2,
@@ -2032,7 +2034,8 @@ class TestInstallSnapshot:
             data=b"{}",
         )
 
-        assert raft._elapsed_time == pytest.approx(0.0)
+        # The heartbeat event should have been set by a valid InstallSnapshot
+        assert raft._heartbeat_event.is_set()
 
 
 class TestSnapshotStorage:
