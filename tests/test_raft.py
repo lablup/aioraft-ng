@@ -3279,3 +3279,542 @@ class TestHeartbeatCommitIndex:
 
         assert success is True
         assert raft.commit_index == 2, f"commitIndex should remain at 2, got {raft.commit_index}"
+
+
+class TestReplicationIntegration:
+    """Integration tests for the full replication pipeline (#22)."""
+
+    @pytest.mark.asyncio
+    async def test_leader_commits_when_majority_acknowledges(self):
+        """commitIndex should advance when a majority of peers have replicated."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+            raft_pb2.Log(index=2, term=1, command="SET b 2"),
+        ]
+        raft._Raft__commit_index = 0
+        await raft._initialize_leader_volatile_state()
+
+        # One peer has replicated up to index 2 (majority with leader = 2/3)
+        raft._Raft__match_index["node-2"] = 2
+        raft._Raft__match_index["node-3"] = 0
+
+        raft._update_leader_commit_index()
+
+        assert raft.commit_index == 2
+
+    @pytest.mark.asyncio
+    async def test_leader_does_not_commit_when_minority_acknowledges(self):
+        """commitIndex must NOT advance when only a minority has replicated."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3", "node-4", "node-5"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=1, command="SET a 1"),
+        ]
+        raft._Raft__commit_index = 0
+        await raft._initialize_leader_volatile_state()
+
+        # No peers have replicated -- only leader has it (1/5, quorum=3)
+        for peer in raft._Raft__configuration:
+            raft._Raft__match_index[peer] = 0
+
+        raft._update_leader_commit_index()
+
+        assert raft.commit_index == 0
+
+    @pytest.mark.asyncio
+    async def test_leader_does_not_commit_entries_from_previous_terms(self):
+        """Per Raft paper section 5.4.2, a leader must NOT commit entries from
+        previous terms by counting replicas; it can only commit entries from
+        its own current term."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(3)
+        # Log entry from term 2 (previous term)
+        raft._Raft__log = [
+            raft_pb2.Log(index=1, term=2, command="SET a 1"),
+        ]
+        raft._Raft__commit_index = 0
+        await raft._initialize_leader_volatile_state()
+
+        # Both peers have replicated -- full majority
+        raft._Raft__match_index["node-2"] = 1
+        raft._Raft__match_index["node-3"] = 1
+
+        raft._update_leader_commit_index()
+
+        # Must NOT advance because entry term (2) != currentTerm (3)
+        assert raft.commit_index == 0
+
+    @pytest.mark.asyncio
+    async def test_concurrent_append_entries_produce_sequential_indices(self):
+        """Multiple rapid _append_entry calls must produce sequential indices
+        with no duplicates."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+
+        entries = []
+        for i in range(20):
+            entry = await raft._append_entry(f"SET key{i} val{i}")
+            entries.append(entry)
+
+        indices = [e.index for e in entries]
+        # Must be sequential starting from 1
+        assert indices == list(range(1, 21))
+        # No duplicates
+        assert len(set(indices)) == 20
+
+    @pytest.mark.asyncio
+    async def test_client_request_returns_error_on_leadership_loss(self):
+        """on_client_request should return (False, ...) when leadership is lost
+        during the commit wait."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Step down shortly after the request is submitted
+        async def step_down():
+            await asyncio.sleep(0.05)
+            raft._Raft__state = RaftState.FOLLOWER
+
+        step_down_task = asyncio.create_task(step_down())
+        try:
+            success, result, leader_hint = await raft.on_client_request("SET foo bar")
+            assert success is False
+            assert "lost leadership or timeout" in result
+        finally:
+            step_down_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await step_down_task
+
+    @pytest.mark.asyncio
+    async def test_on_append_entries_follower_full_pipeline(self):
+        """Follower receives entries via on_append_entries, commits them, and
+        the apply loop applies them to the state machine."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+        )
+
+        entries = [
+            raft_pb2.Log(index=1, term=1, command="SET a 100"),
+            raft_pb2.Log(index=2, term=1, command="SET b 200"),
+        ]
+
+        # Start apply loop
+        task = asyncio.create_task(raft._apply_committed_entries())
+        try:
+            # Follower receives entries with leader_commit=2
+            term, success = await raft.on_append_entries(
+                term=1,
+                leader_id="leader-node",
+                prev_log_index=0,
+                prev_log_term=0,
+                entries=entries,
+                leader_commit=2,
+            )
+
+            assert success is True
+            assert raft.commit_index == 2
+
+            # Wait for the apply loop to process
+            await wait_until(lambda: raft.last_applied == 2)
+
+            assert sm._store == {"a": "100", "b": "200"}
+        finally:
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+
+    @pytest.mark.asyncio
+    async def test_leader_append_replicate_commit_apply_flow(self):
+        """End-to-end: leader appends entry, simulated replication updates
+        matchIndex, commitIndex advances, apply loop applies to state machine."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2", "node-3"],
+            state_machine=sm,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        await raft._initialize_leader_volatile_state()
+
+        # Start apply loop
+        apply_task = asyncio.create_task(raft._apply_committed_entries())
+        try:
+            # Simulate replication that runs concurrently
+            async def simulate_replication():
+                await asyncio.sleep(0.01)
+                for peer in raft._Raft__configuration:
+                    raft._Raft__match_index[peer] = len(raft._Raft__log)
+                    raft._Raft__next_index[peer] = len(raft._Raft__log) + 1
+                raft._update_leader_commit_index()
+
+            repl_task = asyncio.create_task(simulate_replication())
+            success, result, leader_hint = await raft.on_client_request("SET mykey myval")
+            assert success is True
+
+            # Wait for the apply loop to apply the committed entry
+            await wait_until(lambda: raft.last_applied >= 1)
+
+            assert sm._store.get("mykey") == "myval"
+            repl_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await repl_task
+        finally:
+            apply_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await apply_task
+
+
+class TestReplicateToSnapshotEdgeCases:
+    """Edge case tests for _replicate_to_peer around snapshot boundaries (#23)."""
+
+    @pytest.mark.asyncio
+    async def test_next_index_at_snapshot_boundary_sends_install_snapshot(self):
+        """When nextIndex[peer] == last_included_index (at boundary),
+        InstallSnapshot should be sent, not AppendEntries."""
+        sm = KeyValueStateMachine()
+        sm._store = {"a": "1"}
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        storage = MemoryStorage()
+        await storage.save_snapshot(10, 1, b"snapshot-data")
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 1
+        raft._Raft__log = [
+            raft_pb2.Log(index=11, term=1, command="SET b 2"),
+        ]
+        raft._Raft__next_index = {"node-2": 10}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        mock_client.install_snapshot.assert_called_once()
+        mock_client.append_entries.assert_not_called()
+
+        # After InstallSnapshot, nextIndex should be snap_idx + 1
+        call_kwargs = mock_client.install_snapshot.call_args[1]
+        assert call_kwargs["last_included_index"] == 10
+        assert raft._Raft__next_index["node-2"] == 11
+        assert raft._Raft__match_index["node-2"] == 10
+
+    @pytest.mark.asyncio
+    async def test_next_index_one_past_snapshot_sends_append_entries(self):
+        """When nextIndex[peer] == last_included_index + 1, AppendEntries
+        should be sent with prevLogIndex = last_included_index."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = [
+            raft_pb2.Log(index=11, term=1, command="SET a 1"),
+            raft_pb2.Log(index=12, term=1, command="SET b 2"),
+        ]
+        raft._Raft__next_index = {"node-2": 11}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        mock_client.install_snapshot.assert_not_called()
+        mock_client.append_entries.assert_called_once()
+
+        call_kwargs = mock_client.append_entries.call_args[1]
+        assert call_kwargs["prev_log_index"] == 10
+        assert call_kwargs["prev_log_term"] == 2
+        assert len(call_kwargs["entries"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_next_index_well_past_snapshot_sends_subset(self):
+        """When nextIndex[peer] is well past snapshot, only entries from
+        nextIndex onwards should be sent."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 1
+        # Log has entries at indices 11-20
+        raft._Raft__log = [raft_pb2.Log(index=i, term=1, command=f"SET k{i} v{i}") for i in range(11, 21)]
+        raft._Raft__next_index = {"node-2": 15}
+        raft._Raft__match_index = {"node-2": 14}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        call_kwargs = mock_client.append_entries.call_args[1]
+        # prevLogIndex should be 14 (nextIndex - 1)
+        assert call_kwargs["prev_log_index"] == 14
+        # prevLogTerm from entry at index 14
+        assert call_kwargs["prev_log_term"] == 1
+        # Entries from index 15 to 20 = 6 entries
+        assert len(call_kwargs["entries"]) == 6
+        assert call_kwargs["entries"][0].index == 15
+        assert call_kwargs["entries"][-1].index == 20
+
+    @pytest.mark.asyncio
+    async def test_empty_log_after_compaction_sends_heartbeat(self):
+        """Leader with last_included_index=10 and empty log should send
+        a heartbeat (AppendEntries with empty entries) when nextIndex = 11."""
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 1
+        raft._Raft__log = []  # empty after compaction
+        raft._Raft__next_index = {"node-2": 11}
+        raft._Raft__match_index = {"node-2": 10}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        call_kwargs = mock_client.append_entries.call_args[1]
+        assert call_kwargs["prev_log_index"] == 10
+        assert call_kwargs["prev_log_term"] == 1
+        assert len(call_kwargs["entries"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_prev_log_index_in_compacted_region_sends_install_snapshot(self):
+        """When nextIndex[peer] points into the compacted region (below
+        last_included_index), InstallSnapshot must be sent."""
+        sm = KeyValueStateMachine()
+        sm._store = {"x": "1"}
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+        mock_client.append_entries = AsyncMock(return_value=(1, True))
+
+        storage = MemoryStorage()
+        await storage.save_snapshot(10, 1, b"snapshot-data")
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 1
+        raft._Raft__log = [
+            raft_pb2.Log(index=11, term=1, command="SET y 2"),
+        ]
+        raft._Raft__next_index = {"node-2": 5}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        mock_client.install_snapshot.assert_called_once()
+        mock_client.append_entries.assert_not_called()
+
+        # After snapshot, nextIndex should advance past snapshot
+        assert raft._Raft__next_index["node-2"] == 11
+        assert raft._Raft__match_index["node-2"] == 10
+
+    @pytest.mark.asyncio
+    async def test_install_snapshot_response_with_higher_term_steps_down(self):
+        """If InstallSnapshot response has a higher term, the leader should
+        not update nextIndex/matchIndex and should return (higher_term, False)."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        # Peer responds with a higher term
+        mock_client.install_snapshot = AsyncMock(return_value=(5,))
+
+        storage = MemoryStorage()
+        await storage.save_snapshot(10, 1, b"snapshot-data")
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(1)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 1
+        raft._Raft__log = []
+        raft._Raft__next_index = {"node-2": 5}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert term == 5
+        assert success is False
+        # nextIndex/matchIndex should NOT have been updated
+        assert raft._Raft__next_index["node-2"] == 5
+        assert raft._Raft__match_index["node-2"] == 0
+
+    @pytest.mark.asyncio
+    async def test_next_index_exactly_one_sends_install_snapshot(self):
+        """When nextIndex[peer] = 1 and last_included_index > 0,
+        InstallSnapshot should be sent."""
+        sm = KeyValueStateMachine()
+        mock_server = MagicMock()
+        mock_server.bind = MagicMock()
+        mock_client = AsyncMock()
+        mock_client.install_snapshot = AsyncMock(return_value=(1,))
+
+        storage = MemoryStorage()
+        await storage.save_snapshot(10, 2, b"snap")
+
+        raft = await Raft.new(
+            "node-1",
+            server=mock_server,
+            client=mock_client,
+            configuration=["node-2"],
+            state_machine=sm,
+            storage=storage,
+        )
+
+        raft._Raft__state = RaftState.LEADER
+        raft._Raft__current_term.set(2)
+        raft._Raft__last_included_index = 10
+        raft._Raft__last_included_term = 2
+        raft._Raft__log = [
+            raft_pb2.Log(index=11, term=2, command="SET z 9"),
+        ]
+        raft._Raft__next_index = {"node-2": 1}
+        raft._Raft__match_index = {"node-2": 0}
+
+        term, success = await raft._replicate_to_peer("node-2")
+
+        assert success is True
+        mock_client.install_snapshot.assert_called_once()
+        assert raft._Raft__next_index["node-2"] == 11
+        assert raft._Raft__match_index["node-2"] == 10
