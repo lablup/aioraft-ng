@@ -4,7 +4,6 @@ import json
 import logging
 import math
 from collections.abc import Awaitable, Callable, Iterable
-from datetime import datetime
 from typing import Final
 
 from aioraft.client import AbstractRaftClient
@@ -21,8 +20,6 @@ from aioraft.types import (
     aobject,
 )
 from aioraft.utils import MutableInt, randrangef
-
-logging.basicConfig(level=logging.INFO)
 
 __all__ = ("Raft",)
 
@@ -151,7 +148,7 @@ class Raft(aobject, AbstractRaftProtocol):
                                 break
                             await asyncio.sleep(self.__election_timeout)
                     case RaftState.LEADER:
-                        logging.info(f"[{datetime.now()}] LEADER({self.id}, term={self.current_term})")
+                        log.info("LEADER %s term=%d", self.id, self.current_term)
                         while self.has_leadership():
                             await self._publish_heartbeat()
                             await asyncio.sleep(self.__heartbeat_timeout)
@@ -235,7 +232,7 @@ class Raft(aobject, AbstractRaftProtocol):
     async def __change_state(self, next_state: RaftState) -> None:
         if self.__state is next_state:
             return
-        log.debug(f"[{self.__id.split(':')[-1]}] change_state(): {self.__state} -> {next_state}")
+        log.info("State change %s: %s -> %s", self.__id, self.__state.name, next_state.name)
         self.__state = next_state
         if callback := self.__on_state_changed:
             if inspect.iscoroutinefunction(callback):
@@ -253,7 +250,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
         current_term = self.current_term
         last_log_index, last_log_term = self._get_last_log_info()
-        logging.info(f"[{datetime.now()}] id={self.id} Campaign(term={current_term})")
+        log.info("Campaign started id=%s term=%d", self.id, current_term)
 
         terms, grants = zip(
             *await asyncio.gather(
@@ -724,7 +721,7 @@ class Raft(aobject, AbstractRaftProtocol):
                     try:
                         await self.__state_machine.apply(entry.command)
                     except Exception as e:
-                        log.error(f"Failed to apply entry {self.__last_applied}: {e}")
+                        log.error("Failed to apply entry %d: %s", self.__last_applied, e)
             # Check if log compaction is needed after applying entries
             await self._maybe_create_snapshot()
             self.__commit_event.clear()
