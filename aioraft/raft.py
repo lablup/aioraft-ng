@@ -124,7 +124,7 @@ class Raft(aobject, AbstractRaftProtocol):
 
     async def _initialize_volatile_state(self) -> None:
         """Volatile state on all servers
-        (Reinitialized after election)
+        (Initialized once on first boot)
 
         commitIndex (int): index of highest log entry known to be committed
                            (initialized to 0, increases monotonically)
@@ -270,7 +270,6 @@ class Raft(aobject, AbstractRaftProtocol):
         last_log_index: int,
         last_log_term: int,
     ) -> Tuple[int, bool]:
-        await self.__reset_timeout()
         async with self._vote_request_lock:
             if term < (current_term := self.current_term):
                 log.debug(
@@ -285,6 +284,7 @@ class Raft(aobject, AbstractRaftProtocol):
                         f"[on_request_vote] TRUE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
                     )
                     self.__voted_for = candidate_id
+                    await self.__reset_timeout()
                     return (self.current_term, True)
             log.debug(
                 f"[on_request_vote] FALSE id={self.__id[-5:]} current_term={current_term} candidate={candidate_id[-5:]} term={term} voted_for={self.voted_for}"
@@ -312,7 +312,7 @@ class Raft(aobject, AbstractRaftProtocol):
         return self.__state
 
     @property
-    def elapsed_time(self) -> float:
+    def _elapsed_time(self) -> float:
         return self.__elapsed_time
 
     @property

@@ -26,6 +26,13 @@ def build_local_ip() -> str:
 
 
 class AtomicInteger:
+    """Simple mutable integer wrapper for in-place updates.
+
+    Note: This is not truly atomic (no lock protection). It is safe for
+    single-threaded asyncio use but should not be shared across OS threads
+    without external synchronisation.
+    """
+
     def __init__(self, value: int = 0):
         self.__value = value
 

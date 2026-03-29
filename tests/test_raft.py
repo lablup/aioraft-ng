@@ -144,7 +144,7 @@ async def test_stale_append_entries_does_not_reset_election_timer():
     assert current_term == 5
 
     # The election timer should NOT have been reset (elapsed_time stays 0.1)
-    assert raft.elapsed_time == pytest.approx(0.1), (
+    assert raft._elapsed_time == pytest.approx(0.1), (
         "Election timer was reset by a stale AppendEntries RPC; "
         "only valid RPCs should reset the timer"
     )
@@ -184,6 +184,6 @@ async def test_valid_append_entries_resets_election_timer():
     assert success is True
 
     # The election timer should have been reset (elapsed_time back to 0.0)
-    assert raft.elapsed_time == pytest.approx(0.0), (
+    assert raft._elapsed_time == pytest.approx(0.0), (
         "Election timer was not reset by a valid AppendEntries RPC"
     )
