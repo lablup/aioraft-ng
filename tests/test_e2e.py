@@ -121,11 +121,32 @@ class RaftCluster:
         self.tasks.append(asyncio.create_task(node.main()))
         return node
 
+    async def wait_for_term_agreement(self, timeout: float = 5.0) -> bool:
+        """Poll until all nodes share the same term."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            terms = {node.current_term for node in self.nodes}
+            if len(terms) == 1:
+                return True
+            await asyncio.sleep(0.1)
+        return False
+
+    async def wait_for_replication(self, min_log_length: int = 1, timeout: float = 5.0) -> bool:
+        """Poll until all nodes have at least `min_log_length` log entries."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if all(len(node.log) >= min_log_length for node in self.nodes):
+                return True
+            await asyncio.sleep(0.1)
+        return False
+
     async def stop(self):
         """Stop all tasks."""
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
+        # Let the event loop finalize cleanup (e.g. release listening sockets)
+        await asyncio.sleep(0)
 
 
 # ---------------------------------------------------------------------------
@@ -150,10 +171,9 @@ async def test_leader_election_3_nodes():
         followers = cluster.get_followers()
         assert len(followers) == 2
 
-        # All nodes agree on the same term
-        leader_term = leader.current_term
-        for node in cluster.nodes:
-            assert node.current_term == leader_term, f"Term mismatch: leader={leader_term}, node {node.id}={node.current_term}"
+        # All nodes agree on the same term (poll to avoid race with heartbeats)
+        agreed = await cluster.wait_for_term_agreement(timeout=5.0)
+        assert agreed, f"Term mismatch after timeout: {[node.current_term for node in cluster.nodes]}"
     finally:
         await cluster.stop()
 
@@ -209,16 +229,16 @@ async def test_client_request_committed():
         )
         assert success, f"Client request failed: result={result!r}, hint={hint!r}"
 
-        # Wait briefly for replication to propagate
-        await asyncio.sleep(1.0)
-
         # Verify the leader has a commit_index > 0
         assert leader.commit_index > 0, "Leader commit_index should be > 0 after a successful write"
 
-        # Check that all nodes have the entry in their logs (via commit_index)
+        # Poll until replication propagates to all nodes
+        replicated = await cluster.wait_for_replication(min_log_length=1, timeout=5.0)
+        assert replicated, "Replication did not propagate to all nodes within timeout"
+
+        # Check that all nodes have the entry in their logs
         for node in cluster.nodes:
-            # Access the internal log via name mangling
-            node_log = node._Raft__log  # type: ignore[attr-defined]
+            node_log = node.log
             assert len(node_log) > 0, f"Node {node.id} has empty log after replication"
             # Verify the SET command is in at least one log entry
             commands = [entry.command for entry in node_log]
