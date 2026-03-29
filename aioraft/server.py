@@ -84,3 +84,22 @@ class GrpcRaftServer(AbstractRaftServer, raft_pb2_grpc.RaftServiceServicer):
             last_log_term=request.last_log_term,
         )
         return raft_pb2.RequestVoteResponse(term=term, vote_granted=vote_granted)
+
+    async def ClientRequest(
+        self,
+        request: raft_pb2.ClientRequestMessage,
+        context: grpc.aio.ServicerContext,
+    ) -> raft_pb2.ClientResponseMessage:
+        if (protocol := self.__protocol) is None:
+            return raft_pb2.ClientResponseMessage(
+                success=False, result="", leader_hint="", error="no protocol bound"
+            )
+        success, result, leader_hint = await protocol.on_client_request(
+            command=request.command,
+        )
+        return raft_pb2.ClientResponseMessage(
+            success=success,
+            result=result,
+            leader_hint=leader_hint or "",
+            error="" if success else result,
+        )

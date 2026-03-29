@@ -1,5 +1,5 @@
 import abc
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 from aioraft.protos import raft_pb2
 from aioraft.types import RaftId
@@ -40,6 +40,19 @@ class AbstractRaftProtocol(abc.ABC):
         -------
         :param int term: currentTerm, for leader to update itself
         :param bool success: true if follower contained entry matching prevLogIndex and prevLogTerm
+        -------
+        """
+        raise NotImplementedError()
+
+    @abc.abstractmethod
+    async def on_client_request(self, command: str) -> Tuple[bool, str, Optional[str]]:
+        """Handle a client command request.
+
+        Returns
+        -------
+        :param bool success: True if the command was committed and applied
+        :param str result: result of applying the command (or error message)
+        :param Optional[str] leader_hint: address of current leader if this node is not the leader
         -------
         """
         raise NotImplementedError()
