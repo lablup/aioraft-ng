@@ -33,6 +33,9 @@ jobs:
     needs: [lint, typecheck, test]
     if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/project/aioraft-ng/
     permissions:
       id-token: write
     steps:
