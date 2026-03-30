@@ -1034,6 +1034,11 @@ class Raft(aobject, AbstractRaftProtocol):
         return math.floor(self.membership / 2) + 1
 
     @property
+    def log(self) -> list:
+        """Return a copy of the current log entries."""
+        return list(self.__log)
+
+    @property
     def configuration(self) -> set[RaftId]:
         """Return the current cluster membership (peers, excluding self)."""
         return set(self.__configuration)
