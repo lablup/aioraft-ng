@@ -80,5 +80,5 @@ dev = [
     "ruff>=0.11",
     "grpcio-tools>=1.70",
     "types-protobuf>=5.29",
-    "setuptools>=83.0.0,<84",
+    "setuptools>=84.1.0",
 ]
